@@ -27,6 +27,12 @@ static uint8_t ir_carrier_duty = 0;
 static SemaphoreHandle_t ir_mutex = nullptr;
 static bool ir_channel_enabled = false;
 static volatile int64_t ir_last_end_us = 0;
+static ir_rmt_tx_monitor_t ir_monitor = nullptr;
+
+void ir_rmt_tx_set_monitor(ir_rmt_tx_monitor_t monitor)
+{
+    ir_monitor = monitor;
+}
 
 int64_t ir_rmt_tx_last_end_us(void)
 {
@@ -163,6 +169,10 @@ bool ir_rmt_tx_send(uint16_t gpio, bool inverted, const uint32_t *symbols, size_
                  (symbols[0] >> 15) & 1 ? '+' : '-', first[0], count > 1 && ((symbols[1] >> 15) & 1) ? '+' : '-',
                  first[1], count > 2 && ((symbols[2] >> 15) & 1) ? '+' : '-', first[2],
                  count > 3 && ((symbols[3] >> 15) & 1) ? '+' : '-', first[3]);
+
+        if (ir_monitor) {
+            ir_monitor(symbols, count);
+        }
 
         rmt_transmit_config_t transmit_config = {};
         transmit_config.loop_count = 0;

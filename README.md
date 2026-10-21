@@ -17,7 +17,7 @@ conditioner does (log `[IR]`):
 |-----------|-------------------------------------------------------------------------------------|
 | Power     | On/Off on and SystemMode not Off                                                    |
 | Mode      | SystemMode: Heat, Cool, Auto (Dry and FanOnly if a controller sets them)            |
-| Setpoint  | Heat: heating setpoint, Cool/Dry/Fan: cooling setpoint, Auto: middle of the two, rounded to 0.5 °C |
+| Setpoint  | Heat: heating setpoint, Cool/Dry/Fan: cooling setpoint, Auto: middle of the two. Rounded to a whole degree (`IR_AC_HALF_DEGREES` for remotes with 0.5 °C) |
 | Fan       | FanMode Low/Medium/High/Auto (Off is sent as Low: a running unit always runs its fan) |
 
 -   Only a change is sent: the sensor reports do not send anything. While the unit is off, changes of the mode,
@@ -26,6 +26,8 @@ conditioner does (log `[IR]`):
 -   Nothing is sent on boot (reboot, OTA update): the air conditioner keeps its own state.
 -   A short press of the BOOT button sends the current state again (e.g. when the air conditioner did not
     receive it).
+-   Every message we send is also decoded by the library and logged (`[IR TX]`: protocol, bytes, description),
+    to check the bytes without a receiver.
 -   IR receiver (TSOP38238, VS1838B, ... 38 kHz module: VCC 3.3 V, GND, OUT to GPIO 5): every received message
     is decoded and logged (`[IR RX]`): protocol, bits, the bytes, the air conditioner description and the model.
     The receiver decodes the selected protocol and NEC; `IR_RX_DECODE_ALL` compiles every decoder of the library

@@ -286,6 +286,14 @@ menu "IR air conditioner"
             (that one is kept in NVS, a factory reset goes back to this value). FUJITSU_AC: 1 ARRAH2E, 2 ARDB1, 3 ARREB1E, 4 ARJW2, 5 ARRY4,
             6 ARREW4E. See SupportedProtocols.md of IRremoteESP8266 for the other protocols.
 
+    config IR_AC_HALF_DEGREES
+        bool "Send half degrees"
+        default n
+        help
+            The setpoint is sent in 0.5 degC steps. Most remotes only send whole degrees (e.g. Fujitsu ARRAH2E,
+            ARDB1, ARREB1E: a half degree makes the message invalid for the unit), so by default the setpoint is
+            rounded to a whole degree. Enable it only for remotes with half degrees (e.g. Fujitsu ARREW4E).
+
     config IR_AC_MODEL_MAX
         int "Number of models (double click on BOOT)"
         default 6 if IR_AC_PROTOCOL_FUJITSU_AC

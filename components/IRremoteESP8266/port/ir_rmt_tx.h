@@ -28,6 +28,10 @@ inline uint32_t ir_rmt_tx_symbol(uint16_t duration0, bool level0, uint16_t durat
 bool ir_rmt_tx_send(uint16_t gpio, bool inverted, const uint32_t *symbols, size_t count, uint32_t frequency_hz,
                     uint8_t duty, bool modulation);
 
+/// Called with every message before it is sent (in the task which sends it), e.g. to decode and log it.
+typedef void (*ir_rmt_tx_monitor_t)(const uint32_t *symbols, size_t count);
+void ir_rmt_tx_set_monitor(ir_rmt_tx_monitor_t monitor);
+
 /// esp_timer_get_time() when the last message had been sent (0: nothing sent yet).
 /// An IR receiver next to the transmitter also receives the own messages.
 int64_t ir_rmt_tx_last_end_us(void);
