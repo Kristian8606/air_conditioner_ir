@@ -135,6 +135,11 @@ class IRrecv {
   ~IRrecv(void);                                                  // Destructor
   void setTolerance(const uint8_t percent = kTolerance);
   uint8_t getTolerance(void);
+#ifdef IRREMOTE_ESP_IDF
+  // ESP-IDF port: load a message captured by the RMT RX channel (durations in
+  // us, starting with a mark) as if it had been captured by the interrupt.
+  void loadRaw(const uint16_t *usecs, const uint16_t count);
+#endif  // IRREMOTE_ESP_IDF
   bool decode(decode_results *results, irparams_t *save = NULL,
               uint8_t max_skip = 0, uint16_t noise_floor = 0);
   void enableIRIn(const bool pullup = false);

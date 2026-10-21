@@ -5306,7 +5306,13 @@ CONFIG_IR_AC_PROTOCOL_MACRO="FUJITSU_AC"
 # default:
 CONFIG_IR_AC_MODEL=1
 # default:
+CONFIG_IR_AC_MODEL_MAX=6
+# default:
 CONFIG_IR_TX_GPIO=4
+# default:
+CONFIG_IR_RX_GPIO=5
+# default:
+# CONFIG_IR_RX_DECODE_ALL is not set
 # default:
 # CONFIG_IR_TX_INVERTED is not set
 # end of IR air conditioner

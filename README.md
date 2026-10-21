@@ -4,8 +4,8 @@ A Matter Room Air Conditioner for an existing split air conditioner. The ESP32-C
 IR transmitter (like its original remote) and follows changes from the original remote with an IR receiver.
 A bound remote Matter sensor provides the room temperature, humidity and battery.
 
-Work in progress, see [ROADMAP.md](ROADMAP.md). The IR receiver (changes made with the original remote) is
-not there yet.
+Work in progress, see [ROADMAP.md](ROADMAP.md). The IR receiver decodes and logs what it receives, it does
+not update Matter yet.
 
 ## IR control
 
@@ -26,6 +26,17 @@ conditioner does (log `[IR]`):
 -   Nothing is sent on boot (reboot, OTA update): the air conditioner keeps its own state.
 -   A short press of the BOOT button sends the current state again (e.g. when the air conditioner did not
     receive it).
+-   IR receiver (TSOP38238, VS1838B, ... 38 kHz module: VCC 3.3 V, GND, OUT to GPIO 5): every received message
+    is decoded and logged (`[IR RX]`): protocol, bits, the bytes, the air conditioner description and the model.
+    The receiver decodes the selected protocol and NEC; `IR_RX_DECODE_ALL` compiles every decoder of the library
+    to find the protocol of an unknown remote (much more flash). An unknown message is logged as raw durations.
+    Messages right after an own transmission are marked "(own transmission)": with the receiver next to the IR
+    LED this checks the transmitter.
+-   A double press of the BOOT button selects the next model of the remote (1 .. `IR_AC_MODEL_MAX`, Fujitsu: 1
+    ARRAH2E, 2 ARDB1, 3 ARREB1E, 4 ARJW2, 5 ARRY4, 6 ARREW4E, then 1 again), keeps it in NVS and sends the
+    current state with it. To find the model without rebuilding: switch the unit on in the app (e.g. Cool), then
+    double press until the air conditioner reacts. The log shows `[IR] model N of 6`. A factory reset goes back
+    to `IR_AC_MODEL` from menuconfig.
 
 Based on [thermostat_remote_sensor](https://github.com/Kristian8606/thermostat_remote_sensor) v2.3.0.
 Own identity: product ID 0x8001 (the thermostat is 0x8000, so the Home Assistant Matter Server never offers
@@ -77,7 +88,7 @@ Default pins for ESP32-C6-DevKitC-1/M-1 (menuconfig, `Air Conditioner Configurat
 | WS2812 LED      | 8    | `THERMOSTAT_STATUS_LED_GPIO`          |
 | Boot button     | 9    | Factory reset (long press)            |
 | IR transmitter  | 4    | `IR_TX_GPIO` (menu `IR air conditioner`) |
-| IR receiver     | -    | later version                         |
+| IR receiver     | 5    | `IR_RX_GPIO` (menu `IR air conditioner`), -1 to disable |
 
 Status LED:
 

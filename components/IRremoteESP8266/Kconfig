@@ -282,8 +282,19 @@ menu "IR air conditioner"
         range -1 32767
         help
             Model of the remote for protocols with several variants (IRremoteESP8266 *_ac_remote_model_t),
-            -1 or 1 for the default one. FUJITSU_AC: 1 ARRAH2E, 2 ARDB1, 3 ARREB1E, 4 ARJW2, 5 ARRY4,
+            -1 or 1 for the default one. Used until a model is selected with a double click on BOOT
+            (that one is kept in NVS, a factory reset goes back to this value). FUJITSU_AC: 1 ARRAH2E, 2 ARDB1, 3 ARREB1E, 4 ARJW2, 5 ARRY4,
             6 ARREW4E. See SupportedProtocols.md of IRremoteESP8266 for the other protocols.
+
+    config IR_AC_MODEL_MAX
+        int "Number of models (double click on BOOT)"
+        default 6 if IR_AC_PROTOCOL_FUJITSU_AC
+        default 1
+        range 1 32
+        help
+            A double click on the BOOT button selects the next model (1 .. this value, then 1 again), keeps it in
+            NVS and sends the state with it. To find the model of the remote without rebuilding.
+            FUJITSU_AC has 6 models.
 
     config IR_TX_GPIO
         int "IR transmitter GPIO"
@@ -291,6 +302,22 @@ menu "IR air conditioner"
         range 0 ENV_GPIO_OUT_RANGE_MAX
         help
             GPIO driving the IR LED (through a transistor). Do not use the button or the status LED GPIO.
+
+    config IR_RX_GPIO
+        int "IR receiver GPIO"
+        default 5
+        range -1 ENV_GPIO_OUT_RANGE_MAX
+        help
+            Output of the IR receiver module (TSOP38238, VS1838B, ... at 38 kHz). Received messages are decoded and
+            logged ("[IR RX]"). -1: no receiver.
+
+    config IR_RX_DECODE_ALL
+        bool "Decode all protocols (needs much more flash)"
+        default n
+        help
+            The receiver decodes the selected air conditioner protocol and NEC. With this option every decoder of
+            IRremoteESP8266 is compiled, to find the protocol of an unknown remote. It may not fit into the OTA
+            partition next to Matter, disable it again when the protocol is known.
 
     config IR_TX_INVERTED
         bool "Inverted IR output"

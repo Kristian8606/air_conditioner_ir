@@ -1,6 +1,6 @@
 # IRremoteESP8266 v2.9.0 as an ESP-IDF component, see README_ESP_IDF.md.
 file(GLOB IR_SRCS "${CMAKE_CURRENT_LIST_DIR}/src/*.cpp")
-list(APPEND IR_SRCS "${CMAKE_CURRENT_LIST_DIR}/port/ir_rmt_tx.cpp")
+list(APPEND IR_SRCS "${CMAKE_CURRENT_LIST_DIR}/port/ir_rmt_tx.cpp" "${CMAKE_CURRENT_LIST_DIR}/port/ir_rmt_rx.cpp")
 
 idf_component_register(SRCS ${IR_SRCS}
                        INCLUDE_DIRS "src" "port"
@@ -24,6 +24,21 @@ target_compile_definitions(${COMPONENT_LIB} PUBLIC
                            _IR_ENABLE_DEFAULT_=false
                            SEND_${IR_PROTOCOL_MACRO}=true
                            DECODE_${IR_PROTOCOL_MACRO}=true)
+
+# Decoders for the IR receiver: the selected protocol (above) and NEC, a common simple protocol. With
+# "Decode all protocols" every decoder of the library is compiled, to find the protocol of an unknown remote
+# (needs much more flash).
+set(IR_DECODE_DEFS DECODE_NEC=true)
+if(CONFIG_IR_RX_DECODE_ALL)
+    file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/src/IRremoteESP8266.h" IR_DECODE_LINES
+         REGEX "^#define DECODE_[A-Z0-9_]+ +_IR_ENABLE_DEFAULT_")
+    foreach(line ${IR_DECODE_LINES})
+        string(REGEX REPLACE "^#define (DECODE_[A-Z0-9_]+) .*" "\\1" name "${line}")
+        list(APPEND IR_DECODE_DEFS ${name}=true)
+    endforeach()
+endif()
+list(REMOVE_DUPLICATES IR_DECODE_DEFS)
+target_compile_definitions(${COMPONENT_LIB} PUBLIC ${IR_DECODE_DEFS})
 
 # Third party code: its warnings are not ours to fix
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-error -w)

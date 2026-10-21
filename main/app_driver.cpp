@@ -1102,6 +1102,16 @@ static void app_driver_button_single_click_cb(void *arg, void *data)
     }
 }
 
+/* Double press of the BOOT button: next model of the remote (kept in NVS), then send the state with it */
+static void app_driver_button_double_click_cb(void *arg, void *data)
+{
+    app_ir_next_model();
+    if (chip::DeviceLayer::PlatformMgr().ScheduleWork(app_driver_thermostat_update, APP_DRIVER_UPDATE_FORCE_IR) !=
+            CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to schedule the IR update");
+    }
+}
+
 app_driver_handle_t app_driver_thermostat_init()
 {
     /* Initialize the WS2812 status LED */
@@ -1113,6 +1123,8 @@ app_driver_handle_t app_driver_thermostat_init()
     ESP_ERROR_CHECK(iot_button_register_cb(btns[0], BUTTON_LONG_PRESS_START, NULL, app_driver_button_long_press_cb,
                                            NULL));
     ESP_ERROR_CHECK(iot_button_register_cb(btns[0], BUTTON_SINGLE_CLICK, NULL, app_driver_button_single_click_cb,
+                                           NULL));
+    ESP_ERROR_CHECK(iot_button_register_cb(btns[0], BUTTON_DOUBLE_CLICK, NULL, app_driver_button_double_click_cb,
                                            NULL));
 
     /* IR transmitter task */

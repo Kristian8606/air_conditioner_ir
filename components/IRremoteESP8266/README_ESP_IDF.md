@@ -14,15 +14,21 @@ without the Arduino framework. License: LGPL-2.1, see [LICENSE.txt](LICENSE.txt)
     `~IRsend()`, `flush()`, `_rmt_symbols`, `_rmt_freq`, `_rmtAppend()`.
 -   `IRremoteESP8266.h`: includes `<Arduino.h>` (the shim), the protocol headers include it only with `ARDUINO`.
 -   `IRutils.cpp`: `dayToString()` uses `substr()` like in `UNIT_TEST` (String is `std::string`).
--   `IRrecv.cpp`: with `IRREMOTE_ESP_IDF` the timer and GPIO interrupt code (4 blocks) is left out, so
-    `enableIRIn()` / `disableIRIn()` do not capture anything yet. Decoding is unchanged.
+-   `IRrecv.h`, `IRrecv.cpp`: with `IRREMOTE_ESP_IDF` the timer and GPIO interrupt code (4 blocks) is left out,
+    `enableIRIn()` / `disableIRIn()` do not capture anything (do not call `enableIRIn()`: its `pinMode()` would take
+    the GPIO from the RMT). New `loadRaw()`: loads a message captured by the RMT RX channel (`ir_rmt_rx.h`), then
+    `decode()` works as usual. Decoding is unchanged.
 
 ## Added files (port/)
 
 -   `Arduino.h`: the small part of the Arduino API the library uses outside of its `UNIT_TEST` mode: `math.h`,
     `String` (`std::string`), `F()`, `micros()`, `millis()`, `delay()`, `delayMicroseconds()`, `pinMode()`,
     `digitalWrite()`, `digitalRead()`, `ESP.restart()`.
--   `ir_rmt_tx.h`, `ir_rmt_tx.cpp`: RMT TX channel (created with the first message), copy encoder, carrier.
+-   `ir_rmt_tx.h`, `ir_rmt_tx.cpp`: RMT TX channel (created with the first message), copy encoder, carrier
+    (set before the channel is enabled, like the IR example of ESP-IDF), strongest GPIO drive (about 40 mA) for an
+    IR LED without a transistor. Logs the carrier and the length and first durations of every message.
+-   `ir_rmt_rx.h`, `ir_rmt_rx.cpp`: RMT RX channel for an IR receiver module (TSOP38238, VS1838B, ...),
+    ping-pong (partial) receive, glitch filter, the end of a message is a space longer than the idle time.
 
 ## Protocols
 

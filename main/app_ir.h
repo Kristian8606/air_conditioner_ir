@@ -42,3 +42,10 @@ void app_ir_init();
  * If several states are queued before the IR task gets to them, only the newest one is sent.
  */
 void app_ir_send(const app_ir_state_t *state);
+
+/** Select the next model of the remote (1 .. IR_AC_MODEL_MAX, then 1 again) and keep it in NVS.
+ *
+ * The model is used from the next message on. To try the variants of a protocol without rebuilding.
+ * @return The new model.
+ */
+int16_t app_ir_next_model();

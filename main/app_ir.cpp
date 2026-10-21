@@ -10,7 +10,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <nvs.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <atomic>
 
 /* The application headers (and with them the CHIP headers) come first: the Arduino shim of IRremoteESP8266
  * defines macros like F(), HIGH and LOW, which must not reach them. */
@@ -18,7 +21,12 @@
 #include <app_priv.h>
 
 #include <IRac.h>
+#include <IRrecv.h>
 #include <IRremoteESP8266.h>
+#include <IRutils.h>
+#include <esp_timer.h>
+#include <ir_rmt_rx.h>
+#include <ir_rmt_tx.h>
 
 static const char *TAG = "app_ir";
 
@@ -28,6 +36,11 @@ static const char *TAG = "app_ir";
 #else
 #define APP_IR_TX_INVERTED false
 #endif
+#if CONFIG_IR_RX_DECODE_ALL
+#define APP_IR_RX_DECODE_ALL true
+#else
+#define APP_IR_RX_DECODE_ALL false
+#endif
 
 #define APP_IR_TASK_STACK_SIZE 6144
 #define APP_IR_TASK_PRIORITY 5
@@ -36,6 +49,40 @@ static const char *TAG = "app_ir";
 
 /* One entry: a newer state replaces the one which was not sent yet */
 static QueueHandle_t app_ir_queue = nullptr;
+
+/* Model of the remote: from menuconfig, or the one selected with a double click on BOOT (kept in NVS) */
+#define APP_IR_NVS_NAMESPACE "app_ir"
+#define APP_IR_NVS_KEY_MODEL "model"
+static std::atomic<int16_t> app_ir_model{CONFIG_IR_AC_MODEL};
+
+static void app_ir_model_load()
+{
+    nvs_handle_t handle;
+    if (nvs_open(APP_IR_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return;     /* Nothing stored yet: menuconfig value */
+    }
+    int16_t model;
+    if (nvs_get_i16(handle, APP_IR_NVS_KEY_MODEL, &model) == ESP_OK && model >= 1 && model <= CONFIG_IR_AC_MODEL_MAX) {
+        app_ir_model = model;
+    }
+    nvs_close(handle);
+}
+
+static void app_ir_model_store(int16_t model)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(APP_IR_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_i16(handle, APP_IR_NVS_KEY_MODEL, model);
+        if (err == ESP_OK) {
+            err = nvs_commit(handle);
+        }
+        nvs_close(handle);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to store the model: %s", esp_err_to_name(err));
+    }
+}
 
 static stdAc::opmode_t app_ir_opmode(app_ir_mode_t mode)
 {
@@ -86,7 +133,7 @@ static void app_ir_task(void *arg)
         stdAc::state_t next;
         IRac::initState(&next);
         next.protocol = decode_type_t::IR_AC_PROTOCOL_ENUM;
-        next.model = CONFIG_IR_AC_MODEL;
+        next.model = app_ir_model;
         next.power = state.power;
         next.mode = app_ir_opmode(state.mode);
         next.degrees = state.setpoint / 100.0f;
@@ -97,9 +144,82 @@ static void app_ir_task(void *arg)
         static const char *const mode_names[] = {"Auto", "Cool", "Heat", "Dry", "Fan"};
         static const char *const fan_names[] = {"Auto", "Low", "Medium", "High"};
         bool sent = ac.sendAc();
-        APP_LOG("[IR]       %s %s, power %s, mode %s, %d.%02d C, fan %s (GPIO%d)", sent ? "sent" : "NOT sent",
-                CONFIG_IR_AC_PROTOCOL, state.power ? "ON" : "OFF", mode_names[state.mode], state.setpoint / 100,
+        APP_LOG("[IR]       %s %s model %d, power %s, mode %s, %d.%02d C, fan %s (GPIO%d)",
+                sent ? "sent" : "NOT sent", CONFIG_IR_AC_PROTOCOL, (int)next.model, state.power ? "ON" : "OFF", mode_names[state.mode], state.setpoint / 100,
                 abs(state.setpoint % 100), fan_names[state.fan], CONFIG_IR_TX_GPIO);
+    }
+}
+
+/*******************************************************************************
+ * IR receiver: decode and log what the original remote (or this device) sends
+ ******************************************************************************/
+
+#define APP_IR_RX_TASK_STACK_SIZE 8192
+#define APP_IR_RX_TASK_PRIORITY 4
+/* A space longer than this ends a message (kTimeoutMs of IRremoteESP8266) */
+#define APP_IR_RX_IDLE_US 15000
+#define APP_IR_RX_MAX_DURATIONS 2048
+/* Fewer durations are noise (e.g. a light switched on) */
+#define APP_IR_RX_MIN_DURATIONS 6
+/* A message ending this soon after our own transmission is probably our own one */
+#define APP_IR_RX_OWN_US 500000
+
+static void app_ir_rx_log_raw(const uint16_t *usecs, size_t count)
+{
+    APP_LOG("[IR RX]    raw, %u durations in us (mark, space, ...):", (unsigned)count);
+    char line[16 * 7 + 1];
+    for (size_t i = 0; i < count; i += 16) {
+        size_t length = 0;
+        for (size_t j = i; j < count && j < i + 16; j++) {
+            length += snprintf(line + length, sizeof(line) - length, " %u", usecs[j]);
+        }
+        ESP_LOGI(TAG, "[IR RX]   %s", line);
+    }
+}
+
+static void app_ir_rx_task(void *arg)
+{
+    static uint16_t usecs[APP_IR_RX_MAX_DURATIONS];
+    /* Only used to decode: the capture comes from the RMT, enableIRIn() is not called */
+    IRrecv irrecv(CONFIG_IR_RX_GPIO, APP_IR_RX_MAX_DURATIONS + 2, APP_IR_RX_IDLE_US / 1000, false);
+    decode_results results;
+
+    if (!ir_rmt_rx_start(CONFIG_IR_RX_GPIO, APP_IR_RX_IDLE_US)) {
+        ESP_LOGE(TAG, "IR receiver not started");
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    while (true) {
+        size_t count = ir_rmt_rx_wait(usecs, APP_IR_RX_MAX_DURATIONS, portMAX_DELAY);
+        if (count < APP_IR_RX_MIN_DURATIONS) {
+            continue;
+        }
+        int64_t last_tx = ir_rmt_tx_last_end_us();
+        bool own = last_tx != 0 && esp_timer_get_time() - last_tx < APP_IR_RX_OWN_US;
+
+        irrecv.loadRaw(usecs, count);
+        if (!irrecv.decode(&results) || results.decode_type == decode_type_t::UNKNOWN) {
+            APP_LOG("[IR RX]    UNKNOWN protocol%s (decoders: %s, NEC%s)", own ? " (own transmission)" : "",
+                    CONFIG_IR_AC_PROTOCOL, APP_IR_RX_DECODE_ALL ? ", all" : "");
+            app_ir_rx_log_raw(usecs, count);
+            continue;
+        }
+
+        APP_LOG("[IR RX]    %s, %u bits%s", typeToString(results.decode_type, results.repeat).c_str(),
+                results.bits, own ? " (own transmission)" : "");
+        APP_LOG("[IR RX]    data %s", resultToHexidecimal(&results).c_str());
+#if DECODE_AC
+        String description = IRAcUtils::resultAcToString(&results);
+        if (description.length() > 0) {
+            APP_LOG("[IR RX]    %s", description.c_str());
+        }
+        stdAc::state_t state;
+        if (IRAcUtils::decodeToState(&results, &state)) {
+            APP_LOG("[IR RX]    model %d, power %s, mode %d, %.1f C, fan %d", state.model, state.power ? "ON" : "OFF",
+                    (int)state.mode, state.degrees, (int)state.fanspeed);
+        }
+#endif  // DECODE_AC
     }
 }
 
@@ -111,10 +231,17 @@ void app_ir_init()
         ESP_LOGE(TAG, "Failed to start the IR task");
         return;
     }
+    app_ir_model_load();
+#if CONFIG_IR_RX_GPIO >= 0
+    if (xTaskCreate(app_ir_rx_task, "ir_rx", APP_IR_RX_TASK_STACK_SIZE, nullptr, APP_IR_RX_TASK_PRIORITY, nullptr) !=
+            pdPASS) {
+        ESP_LOGE(TAG, "Failed to start the IR receiver task");
+    }
+#endif
     if (!IRac::isProtocolSupported(decode_type_t::IR_AC_PROTOCOL_ENUM)) {
         ESP_LOGE(TAG, "Protocol %s is not compiled in", CONFIG_IR_AC_PROTOCOL);
     }
-    ESP_LOGI(TAG, "IR air conditioner: %s, model %d, transmitter GPIO%d", CONFIG_IR_AC_PROTOCOL, CONFIG_IR_AC_MODEL,
+    ESP_LOGI(TAG, "IR air conditioner: %s, model %d, transmitter GPIO%d", CONFIG_IR_AC_PROTOCOL, (int)app_ir_model,
              CONFIG_IR_TX_GPIO);
 }
 
@@ -123,4 +250,14 @@ void app_ir_send(const app_ir_state_t *state)
     if (app_ir_queue) {
         xQueueOverwrite(app_ir_queue, state);
     }
+}
+
+int16_t app_ir_next_model()
+{
+    int16_t model = app_ir_model;
+    model = model >= 1 && model < CONFIG_IR_AC_MODEL_MAX ? model + 1 : 1;
+    app_ir_model = model;
+    app_ir_model_store(model);
+    APP_LOG("[IR]       model %d of %d (%s), stored", model, CONFIG_IR_AC_MODEL_MAX, CONFIG_IR_AC_PROTOCOL);
+    return model;
 }

@@ -434,6 +434,27 @@ void IRrecv::disableIRIn(void) {
 #endif  // UNIT_TEST
 }
 
+#ifdef IRREMOTE_ESP_IDF
+/// ESP-IDF port: load a message captured by the RMT RX channel.
+/// @param[in] usecs Durations in microseconds: mark, space, mark, ...
+/// @param[in] count Nr. of durations.
+void IRrecv::loadRaw(const uint16_t *usecs, const uint16_t count) {
+  params.overflow = false;
+  params.rawbuf[0] = 1;  // The gap before the message, not used by decoders.
+  uint16_t rawlen = 1;
+  for (uint16_t i = 0; i < count; i++) {
+    if (rawlen >= params.bufsize) {
+      params.overflow = true;
+      break;
+    }
+    params.rawbuf[rawlen++] = std::max(static_cast<uint16_t>(1),
+                                       static_cast<uint16_t>(usecs[i] / kRawTick));
+  }
+  params.rawlen = rawlen;
+  params.rcvstate = kStopState;
+}
+#endif  // IRREMOTE_ESP_IDF
+
 /// Pause collection of received IR data.
 /// @see IRrecv class constructor
 void IRrecv::pause(void) {
