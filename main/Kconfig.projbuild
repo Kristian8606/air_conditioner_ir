@@ -32,23 +32,14 @@ menu "Example Configuration"
 
 endmenu
 
-menu "Thermostat Configuration"
-
-    config THERMOSTAT_ENABLE_COOLING
-        bool "Enable cooling"
-        default y
-        help
-            Adds the Cooling feature to the Thermostat cluster (Off/Heat/Cool system modes)
-            and drives the cooling relay. Disable it for a heating only thermostat (Off/Heat).
+menu "Air Conditioner Configuration"
 
     config THERMOSTAT_ENABLE_AUTO
         bool "Enable Auto mode"
-        depends on THERMOSTAT_ENABLE_COOLING
         default y
         help
-            Adds the AutoMode feature (Off/Heat/Cool/Auto). In Auto the thermostat uses the
-            heating setpoint to decide when to heat and the cooling setpoint to decide when to cool.
-            The two setpoints are kept apart by MinSetpointDeadBand.
+            Adds the AutoMode feature (Off/Heat/Cool/Auto) to the Thermostat cluster. Heat and Cool are
+            always there (a Room Air Conditioner always has the Cooling feature).
 
     config THERMOSTAT_MIN_SETPOINT
         int "Lowest setpoint (degC)"
@@ -75,8 +66,7 @@ menu "Thermostat Configuration"
             above the lowest one, otherwise the Thermostat server would reject a heating setpoint near the
             maximum even in Heat mode. Apple Home offers one range for all modes, so with a dead band the
             highest values of the heating slider are rejected and the slider jumps back.
-            With 0 both setpoints use the full range. Heating and cooling still never run together: they use
-            separate setpoints, the hysteresis and an interlock of the relays.
+            With 0 both setpoints use the full range.
 
     config THERMOSTAT_TRACE_LOGS
         bool "Trace attribute writes (debug)"
@@ -86,43 +76,13 @@ menu "Thermostat Configuration"
             attribute and every attribute::update() of the application, with the value and the reason.
             The chip[EM] line just before a POST_UPDATE shows which controller (fabric:node) wrote it.
 
-    config THERMOSTAT_HEAT_RELAY_GPIO
-        int "Heating relay GPIO"
-        default 2
-        range 0 ENV_GPIO_OUT_RANGE_MAX
-        help
-            GPIO connected to the heating relay input. Do not use the button or the LED GPIO.
-
-    config THERMOSTAT_COOL_RELAY_GPIO
-        int "Cooling relay GPIO"
-        depends on THERMOSTAT_ENABLE_COOLING
-        default 3
-        range 0 ENV_GPIO_OUT_RANGE_MAX
-        help
-            GPIO connected to the cooling relay input. Do not use the button or the LED GPIO.
-
-    config THERMOSTAT_RELAY_ACTIVE_HIGH
-        bool "Relays are active HIGH"
-        default y
-        help
-            Disable this for relay modules which switch on with a LOW level on the input.
-
     config THERMOSTAT_STATUS_LED_GPIO
         int "WS2812 status LED GPIO"
         default 8
         range -1 ENV_GPIO_OUT_RANGE_MAX
         help
             Data GPIO of the addressable WS2812 LED (GPIO 8 on ESP32-C6-DevKitC/M). Set -1 to disable.
-            Orange: heating relay on, Blue: cooling relay on, White: both relays off.
-
-    config THERMOSTAT_HYSTERESIS
-        int "Hysteresis (0.01 degC)"
-        default 50
-        range 0 500
-        help
-            Heating turns ON when temperature <= heating setpoint - hysteresis and OFF when it reaches
-            the heating setpoint. Cooling turns ON when temperature >= cooling setpoint + hysteresis and
-            OFF when it drops to the cooling setpoint. Default 50 means 0.5 degC.
+            Orange: Heat, Blue: Cool, Green: Auto, Cyan: FanOnly/Dry, White: off.
 
     config THERMOSTAT_TEMPERATURE_STEP
         int "Temperature rounding step (0.01 degC)"
@@ -130,7 +90,7 @@ menu "Thermostat Configuration"
         range 1 100
         help
             The temperature from the sensor is rounded to the nearest multiple of this step before it is
-            shown as LocalTemperature and compared with the setpoints. Default 50 means 0.5 degC
+            shown as LocalTemperature. Default 50 means 0.5 degC
             (24.20 -> 24.0, 24.30 -> 24.5). 1 keeps the value exactly as the sensor reports it.
 
     config THERMOSTAT_TEMPERATURE_CALIBRATION
@@ -161,11 +121,11 @@ menu "Thermostat Configuration"
         range 30 86400
         help
             If no report is received from the temperature sensor for this time, the reading is
-            treated as unknown and both relays are switched OFF. Must be larger than the max interval.
+            treated as unknown (LocalTemperature null). Must be larger than the max interval.
 
 endmenu
 
-menu "Thermostat Device Information"
+menu "Air Conditioner Device Information"
 
     config THERMOSTAT_VENDOR_NAME
         string "Vendor name"

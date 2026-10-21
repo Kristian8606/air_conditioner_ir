@@ -9,6 +9,7 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <driver/gpio.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include <esp_matter.h>
@@ -16,6 +17,7 @@
 #include <led_strip.h>
 
 #include <app_priv.h>
+#include <app_ir.h>
 
 #include <app/AttributePathParams.h>
 #include <app/ConcreteAttributePath.h>
@@ -27,6 +29,8 @@
 #include <clusters/relative_humidity_measurement/integration.h>
 #include <app/clusters/power-source-server/power-source-server.h>
 #include <app/clusters/fan-control-server/fan-control-delegate.h>
+#include <app/clusters/fan-control-server/CodegenIntegration.h>
+#include <app/clusters/fan-control-server/FanControlCluster.h>
 #include <inttypes.h>
 #include <lib/core/TLVReader.h>
 
@@ -63,51 +67,17 @@ static bool identify_led_on = false;
 static int identify_toggles_left = 0;
 static uint8_t identify_color[3] = {0, 0, 0};
 
-/* Current state of the outputs */
-static bool heating_on = false;
-static bool cooling_on = false;
+/* Mode the air conditioner is in (Off when OnOff is off), shown by the status LED */
+static Thermostat::SystemModeEnum ac_mode = Thermostat::SystemModeEnum::kOff;
 
 static led_strip_handle_t status_led = nullptr;
 
-#define RELAY_LEVEL(on) ((on) == CONFIG_THERMOSTAT_RELAY_ACTIVE_HIGH ? 1 : 0)
 #define SENSOR_CHECK_PERIOD_SEC 10
 #define SUBSCRIBE_RETRY_PERIOD_SEC 30
 
 /*******************************************************************************
- * Relays and status LED
+ * Status LED
  ******************************************************************************/
-
-static void app_driver_relay_init(int gpio_num)
-{
-    /* Set the inactive level before switching the pin to output, so the relay never clicks on boot. */
-    gpio_set_level((gpio_num_t)gpio_num, RELAY_LEVEL(false));
-    gpio_config_t io_config = {};
-    io_config.pin_bit_mask = 1ULL << gpio_num;
-    io_config.mode = GPIO_MODE_OUTPUT;
-    ESP_ERROR_CHECK(gpio_config(&io_config));
-}
-
-static void app_driver_set_heating(bool on)
-{
-    if (heating_on != on) {
-        APP_LOG("[RELAY]    HEAT %s (GPIO%d)", on ? "ON" : "OFF", CONFIG_THERMOSTAT_HEAT_RELAY_GPIO);
-    }
-    heating_on = on;
-    gpio_set_level((gpio_num_t)CONFIG_THERMOSTAT_HEAT_RELAY_GPIO, RELAY_LEVEL(on));
-}
-
-static void app_driver_set_cooling(bool on)
-{
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
-    if (cooling_on != on) {
-        APP_LOG("[RELAY]    COOL %s (GPIO%d)", on ? "ON" : "OFF", CONFIG_THERMOSTAT_COOL_RELAY_GPIO);
-    }
-#endif
-    cooling_on = on;
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
-    gpio_set_level((gpio_num_t)CONFIG_THERMOSTAT_COOL_RELAY_GPIO, RELAY_LEVEL(on));
-#endif
-}
 
 static void app_driver_status_led_init()
 {
@@ -180,38 +150,37 @@ static int16_t app_driver_get_setpoint(uint32_t attribute_id, int16_t default_va
     return val.val.i16;
 }
 
-/* Heating demand. ON at (setpoint - hysteresis), OFF when the setpoint is reached. The values are compared as
- * Matter reports them, in 0.01 degC. */
-static bool app_driver_heating_demand(int16_t temperature, int16_t heating_setpoint)
+/* ThermostatRunningState and ThermostatRunningMode. The air conditioner controls the temperature itself and
+ * gives no feedback over IR, so they are derived from the mode: Heat heats, Cool cools, FanOnly and Dry run the fan.
+ * In Auto the remote temperature tells which way the unit works (fan only between the two setpoints). */
+static void app_driver_update_running_state(Thermostat::SystemModeEnum mode, int16_t heating_setpoint,
+                                            int16_t cooling_setpoint)
 {
-    if (heating_on) {
-        return temperature < heating_setpoint;
-    }
-    return temperature < heating_setpoint && temperature <= heating_setpoint - CONFIG_THERMOSTAT_HYSTERESIS;
-}
+    using Thermostat::RelayStateBitmap;
+    using Thermostat::SystemModeEnum;
+    using Thermostat::ThermostatRunningModeEnum;
 
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
-/* Cooling demand. ON at (setpoint + hysteresis), OFF when the setpoint is reached. */
-static bool app_driver_cooling_demand(int16_t temperature, int16_t cooling_setpoint)
-{
-    if (cooling_on) {
-        return temperature > cooling_setpoint;
+    uint16_t running_state = 0;
+    ThermostatRunningModeEnum running_mode = ThermostatRunningModeEnum::kOff;
+    bool heat = mode == SystemModeEnum::kHeat || mode == SystemModeEnum::kEmergencyHeat;
+    bool cool = mode == SystemModeEnum::kCool || mode == SystemModeEnum::kPrecooling;
+    if (mode == SystemModeEnum::kAuto && remote_temperature_valid) {
+        heat = remote_temperature < heating_setpoint;
+        cool = remote_temperature > cooling_setpoint;
     }
-    return temperature > cooling_setpoint && temperature >= cooling_setpoint + CONFIG_THERMOSTAT_HYSTERESIS;
-}
-#endif
+    if (mode != SystemModeEnum::kOff) {
+        running_state |= chip::to_underlying(RelayStateBitmap::kFan);
+    }
+    if (heat) {
+        running_state |= chip::to_underlying(RelayStateBitmap::kHeat);
+        running_mode = ThermostatRunningModeEnum::kHeat;
+    } else if (cool) {
+        running_state |= chip::to_underlying(RelayStateBitmap::kCool);
+        running_mode = ThermostatRunningModeEnum::kCool;
+    }
 
-static void app_driver_update_running_state()
-{
     /* Only report a change, not every evaluation */
     static int32_t last_running_state = -1;
-    uint16_t running_state = 0;
-    if (heating_on) {
-        running_state |= chip::to_underlying(Thermostat::RelayStateBitmap::kHeat);
-    }
-    if (cooling_on) {
-        running_state |= chip::to_underlying(Thermostat::RelayStateBitmap::kCool);
-    }
     if (running_state == last_running_state) {
         return;
     }
@@ -219,22 +188,17 @@ static void app_driver_update_running_state()
 
     esp_matter_attr_val_t val = esp_matter_bitmap16(running_state);
     app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::ThermostatRunningState::Id, &val,
-                                "relay changed");
-
+                                "running state");
 #if CONFIG_THERMOSTAT_ENABLE_AUTO
-    Thermostat::ThermostatRunningModeEnum running_mode = Thermostat::ThermostatRunningModeEnum::kOff;
-    if (heating_on) {
-        running_mode = Thermostat::ThermostatRunningModeEnum::kHeat;
-    } else if (cooling_on) {
-        running_mode = Thermostat::ThermostatRunningModeEnum::kCool;
-    }
     val = esp_matter_enum8(chip::to_underlying(running_mode));
     app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::ThermostatRunningMode::Id, &val,
-                                "relay changed");
+                                "running state");
+#else
+    (void)running_mode;
 #endif
 }
 
-/* The LED shows the state of the relays */
+/* The LED shows the mode of the air conditioner */
 static void app_driver_update_status_led()
 {
     if (factory_reset_pending) {
@@ -245,12 +209,26 @@ static void app_driver_update_status_led()
         } else {
             app_driver_status_led_set(0, 0, 0);
         }
-    } else if (heating_on) {
-        app_driver_status_led_set(60, 20, 0);       /* Orange: heating relay on */
-    } else if (cooling_on) {
-        app_driver_status_led_set(0, 0, 50);        /* Blue: cooling relay on */
     } else {
-        app_driver_status_led_set(25, 25, 25);      /* White: both relays off */
+        switch (ac_mode) {
+        case Thermostat::SystemModeEnum::kHeat:
+        case Thermostat::SystemModeEnum::kEmergencyHeat:
+            app_driver_status_led_set(60, 20, 0);   /* Orange: Heat */
+            break;
+        case Thermostat::SystemModeEnum::kCool:
+        case Thermostat::SystemModeEnum::kPrecooling:
+            app_driver_status_led_set(0, 0, 50);    /* Blue: Cool */
+            break;
+        case Thermostat::SystemModeEnum::kAuto:
+            app_driver_status_led_set(0, 40, 0);    /* Green: Auto */
+            break;
+        case Thermostat::SystemModeEnum::kOff:
+            app_driver_status_led_set(25, 25, 25);  /* White: off */
+            break;
+        default:
+            app_driver_status_led_set(0, 30, 30);   /* Cyan: FanOnly, Dry */
+            break;
+        }
     }
 }
 
@@ -352,14 +330,94 @@ void app_driver_identify_effect(uint8_t effect_id)
     }
 }
 
-/* Compare the remote temperature with the setpoints and drive the relays.
- *
- * The heating and the cooling setpoints are read into separate variables, they are never mixed:
- *  - Heat: only the heating setpoint is used, cooling is always off.
- *  - Cool: only the cooling setpoint is used, heating is always off.
- *  - Auto: heating is controlled by the heating setpoint and cooling by the cooling setpoint. The
- *          Thermostat server keeps cooling setpoint >= heating setpoint + MinSetpointDeadBand, so
- *          both demands can never be true at the same time. */
+/*******************************************************************************
+ * IR: the whole state of the air conditioner from the Matter attributes
+ ******************************************************************************/
+
+/* FanMode from the FanControl server (code-driven, not in the esp-matter attribute storage). The server keeps
+ * FanMode in sync with PercentSetting and SpeedSetting (e.g. the slider in Apple Home), so FanMode is enough. */
+static app_ir_fan_t app_driver_get_fan()
+{
+    FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
+    if (!fan) {
+        return APP_IR_FAN_AUTO;
+    }
+    switch (fan->GetFanMode()) {
+    case FanControl::FanModeEnum::kLow:
+    case FanControl::FanModeEnum::kOff:     /* An air conditioner which is on always runs its fan: lowest speed */
+        return APP_IR_FAN_LOW;
+    case FanControl::FanModeEnum::kMedium:
+        return APP_IR_FAN_MEDIUM;
+    case FanControl::FanModeEnum::kHigh:
+        return APP_IR_FAN_HIGH;
+    default:                                /* Auto, On, Smart */
+        return APP_IR_FAN_AUTO;
+    }
+}
+
+static bool app_driver_ir_state_equal(const app_ir_state_t &a, const app_ir_state_t &b)
+{
+    return a.power == b.power && a.mode == b.mode && a.setpoint == b.setpoint && a.fan == b.fan;
+}
+
+/* Build the IR state from OnOff, SystemMode, the setpoints and FanMode and send it when it changed. Sensor
+ * reports re-evaluate the thermostat as well, they do not change the state, so nothing is sent for them.
+ * force: send even if nothing changed (BOOT button). */
+static void app_driver_ir_update(bool power, Thermostat::SystemModeEnum mode, int16_t heating_setpoint,
+                                 int16_t cooling_setpoint, bool force)
+{
+    using Thermostat::SystemModeEnum;
+
+    app_ir_state_t state = {};
+    state.power = power && mode != SystemModeEnum::kOff;
+    state.fan = app_driver_get_fan();
+    switch (mode) {
+    case SystemModeEnum::kHeat:
+    case SystemModeEnum::kEmergencyHeat:
+        state.mode = APP_IR_MODE_HEAT;
+        state.setpoint = heating_setpoint;
+        break;
+    case SystemModeEnum::kCool:
+    case SystemModeEnum::kPrecooling:
+        state.mode = APP_IR_MODE_COOL;
+        state.setpoint = cooling_setpoint;
+        break;
+    case SystemModeEnum::kDry:
+        state.mode = APP_IR_MODE_DRY;
+        state.setpoint = cooling_setpoint;
+        break;
+    case SystemModeEnum::kFanOnly:
+        state.mode = APP_IR_MODE_FAN;
+        state.setpoint = cooling_setpoint;
+        break;
+    default: {
+        /* Auto (and Off, which only sends power off): the air conditioner has one target temperature, the
+         * middle of the heating/cooling range, rounded to 0.5 degC */
+        state.mode = APP_IR_MODE_AUTO;
+        int middle = (heating_setpoint + cooling_setpoint) / 2;
+        state.setpoint = (int16_t)((middle + 25) / 50 * 50);
+        break;
+    }
+    }
+
+    /* Nothing is sent on boot: the air conditioner keeps its own state over a reboot or an OTA update of the
+     * ESP32, sending it again would only make it beep. The first state is just remembered. */
+    static bool have_last = false;
+    static app_ir_state_t last;
+    if (!have_last) {
+        have_last = true;
+        last = state;
+        APP_LOG("[IR]       boot state remembered, not sent");
+        return;
+    }
+    /* While the unit is off, a new mode, setpoint or fan speed is only sent with the next power on */
+    if (!force && (app_driver_ir_state_equal(state, last) || (!state.power && !last.power))) {
+        return;
+    }
+    last = state;
+    app_ir_send(&state);
+}
+
 /* OnOff of the Room Air Conditioner (false if it cannot be read) */
 static bool app_driver_get_power()
 {
@@ -369,6 +427,9 @@ static bool app_driver_get_power()
     }
     return val.val.b;
 }
+
+/* arg of app_driver_thermostat_update(): send the IR state even if nothing changed */
+#define APP_DRIVER_UPDATE_FORCE_IR 1
 
 static void app_driver_thermostat_update(intptr_t arg)
 {
@@ -382,79 +443,26 @@ static void app_driver_thermostat_update(intptr_t arg)
                                                    : Thermostat::SystemModeEnum::kOff;
     int16_t heating_setpoint = app_driver_get_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id,
                                                        THERMOSTAT_DEFAULT_HEAT_SETPOINT);
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
     int16_t cooling_setpoint = app_driver_get_setpoint(Thermostat::Attributes::OccupiedCoolingSetpoint::Id,
                                                        THERMOSTAT_DEFAULT_COOL_SETPOINT);
-#endif
 
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
     APP_TRACE(TAG, "control reads mode %u, heat %d, cool %d", chip::to_underlying(system_mode), heating_setpoint,
               cooling_setpoint);
-#else
-    APP_TRACE(TAG, "control reads mode %u, heat %d", chip::to_underlying(system_mode), heating_setpoint);
-#endif
 
-    bool heat = false;
-    bool cool = false;
+    ac_mode = system_mode;
+    app_driver_ir_update(power, static_cast<Thermostat::SystemModeEnum>(app_driver_get_system_mode()),
+                         heating_setpoint, cooling_setpoint, arg == APP_DRIVER_UPDATE_FORCE_IR);
 
+    char temperature[16] = "unknown";
     if (remote_temperature_valid) {
-        switch (system_mode) {
-        case Thermostat::SystemModeEnum::kHeat:
-        case Thermostat::SystemModeEnum::kEmergencyHeat:
-            heat = app_driver_heating_demand(remote_temperature, heating_setpoint);
-            break;
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
-        case Thermostat::SystemModeEnum::kCool:
-        case Thermostat::SystemModeEnum::kPrecooling:
-            cool = app_driver_cooling_demand(remote_temperature, cooling_setpoint);
-            break;
-#endif
-#if CONFIG_THERMOSTAT_ENABLE_AUTO
-        case Thermostat::SystemModeEnum::kAuto:
-            heat = app_driver_heating_demand(remote_temperature, heating_setpoint);
-            cool = app_driver_cooling_demand(remote_temperature, cooling_setpoint);
-            break;
-#endif
-        default:
-            /* Off, FanOnly, Dry, Sleep and the unsupported modes: no heating and no cooling. */
-            break;
-        }
+        snprintf(temperature, sizeof(temperature), "%s%d.%02d C", remote_temperature < 0 ? "-" : "",
+                 abs(remote_temperature) / 100, abs(remote_temperature) % 100);
     }
+    APP_LOG("[STATE]    power %s, mode %s, temperature %s, heat %d.%02d C, cool %d.%02d C",
+            power ? "ON" : "OFF", app_system_mode_name(chip::to_underlying(system_mode)), temperature,
+            heating_setpoint / 100, heating_setpoint % 100, cooling_setpoint / 100, cooling_setpoint % 100);
 
-    if (heat && cool) {
-        /* Should never happen, but never run both relays at the same time. */
-        ESP_LOGW(TAG, "Heating and cooling demand at the same time, switching both off");
-        heat = false;
-        cool = false;
-    }
-
-    /* Always switch the active relay off before the other one is switched on. */
-    if (!heat) {
-        app_driver_set_heating(false);
-    }
-    if (!cool) {
-        app_driver_set_cooling(false);
-    }
-    app_driver_set_heating(heat);
-    app_driver_set_cooling(cool);
-
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
-    APP_LOG("[STATE]    power %s, mode %s, temperature %s%d.%02d C, heat %d.%02d C, cool %d.%02d C -> %s",
-             power ? "ON" : "OFF", app_system_mode_name(chip::to_underlying(system_mode)),
-             remote_temperature < 0 ? "-" : "",
-             abs(remote_temperature) / 100, abs(remote_temperature) % 100,
-             heating_setpoint / 100, heating_setpoint % 100, cooling_setpoint / 100, cooling_setpoint % 100,
-             !remote_temperature_valid ? "no sensor data" : heat ? "heating" : cool ? "cooling" : "idle");
-#else
-    APP_LOG("[STATE]    power %s, mode %s, temperature %s%d.%02d C, heat %d.%02d C -> %s",
-             power ? "ON" : "OFF", app_system_mode_name(chip::to_underlying(system_mode)),
-             remote_temperature < 0 ? "-" : "",
-             abs(remote_temperature) / 100, abs(remote_temperature) % 100,
-             heating_setpoint / 100, heating_setpoint % 100,
-             !remote_temperature_valid ? "no sensor data" : heat ? "heating" : "idle");
-#endif
-
-    app_driver_update_running_state();
+    app_driver_update_running_state(system_mode, heating_setpoint, cooling_setpoint);
     app_driver_update_status_led();
 }
 
@@ -489,7 +497,8 @@ public:
                 mode < 7 ? mode_names[mode] : "Unknown", state.percentCurrent,
                 state.percentSetting.IsNull() ? -1 : state.percentSetting.Value(), state.speedCurrent,
                 state.speedSetting.IsNull() ? -1 : state.speedSetting.Value(), thermostat_endpoint_id, mode);
-        /* The IR command with the whole state is sent from here in a later version */
+        /* FanMode is read from the server in the update, which sends the IR state when it changed */
+        app_driver_thermostat_schedule_update();
     }
 };
 
@@ -954,7 +963,7 @@ static int64_t app_driver_sensor_timeout_us()
 }
 
 /* Periodic check: retries the subscriptions which could not be sent and invalidates the temperature when the
- * sensor stopped reporting, so the relays are never left on with an old reading. */
+ * sensor stopped reporting, so the controllers never show an old reading. */
 static void app_driver_sensor_check_timer_cb(chip::System::Layer *system_layer, void *app_state)
 {
     static uint32_t elapsed_sec = 0;
@@ -1031,20 +1040,16 @@ static void app_driver_thermostat_start_work(intptr_t arg)
 #endif
     app_driver_restore_limit(Thermostat::Attributes::MinHeatSetpointLimit::Id, THERMOSTAT_ABS_MIN_HEAT_SETPOINT);
     app_driver_restore_limit(Thermostat::Attributes::MaxHeatSetpointLimit::Id, THERMOSTAT_ABS_MAX_HEAT_SETPOINT);
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
     app_driver_restore_limit(Thermostat::Attributes::MinCoolSetpointLimit::Id, THERMOSTAT_ABS_MIN_COOL_SETPOINT);
     app_driver_restore_limit(Thermostat::Attributes::MaxCoolSetpointLimit::Id, THERMOSTAT_ABS_MAX_COOL_SETPOINT);
-#endif
 
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
     /* Cooling first: in Auto, the heating setpoint is then checked against the final cooling setpoint */
     app_driver_clamp_setpoint(Thermostat::Attributes::OccupiedCoolingSetpoint::Id, THERMOSTAT_ABS_MIN_COOL_SETPOINT,
                               THERMOSTAT_ABS_MAX_COOL_SETPOINT);
-#endif
     app_driver_clamp_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id, THERMOSTAT_ABS_MIN_HEAT_SETPOINT,
                               THERMOSTAT_ABS_MAX_HEAT_SETPOINT);
 
-    /* Apply the mode and setpoints restored from NVS. The relays stay off until the sensor reports.
+    /* Apply the power, mode and setpoints restored from NVS.
      * The subscriptions are started after kDnssdInitialized, when the binding table has been loaded. */
     app_driver_thermostat_update(0);
 
@@ -1086,14 +1091,19 @@ static void app_driver_button_long_press_cb(void *arg, void *data)
     }
 }
 
+/* Short press of the BOOT button: send the current state over IR again (e.g. when the air conditioner did not
+ * receive it, or was changed with its own remote) */
+static void app_driver_button_single_click_cb(void *arg, void *data)
+{
+    APP_LOG("[IR]       BOOT button: send the state again");
+    if (chip::DeviceLayer::PlatformMgr().ScheduleWork(app_driver_thermostat_update, APP_DRIVER_UPDATE_FORCE_IR) !=
+            CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to schedule the IR update");
+    }
+}
+
 app_driver_handle_t app_driver_thermostat_init()
 {
-    /* Initialize relays, both are off */
-    app_driver_relay_init(CONFIG_THERMOSTAT_HEAT_RELAY_GPIO);
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
-    app_driver_relay_init(CONFIG_THERMOSTAT_COOL_RELAY_GPIO);
-#endif
-
     /* Initialize the WS2812 status LED */
     app_driver_status_led_init();
 
@@ -1102,6 +1112,11 @@ app_driver_handle_t app_driver_thermostat_init()
     ESP_ERROR_CHECK(bsp_iot_button_create(btns, NULL, BSP_BUTTON_NUM));
     ESP_ERROR_CHECK(iot_button_register_cb(btns[0], BUTTON_LONG_PRESS_START, NULL, app_driver_button_long_press_cb,
                                            NULL));
+    ESP_ERROR_CHECK(iot_button_register_cb(btns[0], BUTTON_SINGLE_CLICK, NULL, app_driver_button_single_click_cb,
+                                           NULL));
+
+    /* IR transmitter task */
+    app_ir_init();
 
     return (app_driver_handle_t)btns[0];
 }

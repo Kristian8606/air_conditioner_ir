@@ -1,0 +1,301 @@
+menu "IR air conditioner"
+
+    choice IR_AC_PROTOCOL_CHOICE
+        prompt "Air conditioner protocol"
+        default IR_AC_PROTOCOL_FUJITSU_AC
+        help
+            IR protocol of the air conditioner (decode_type_t of IRremoteESP8266). Only this protocol is
+            compiled, the whole library would not fit into the OTA partition. The IR receiver (later version)
+            shows the protocol of an unknown remote.
+
+    config IR_AC_PROTOCOL_AIRTON
+        bool "AIRTON"
+    config IR_AC_PROTOCOL_AIRWELL
+        bool "AIRWELL"
+    config IR_AC_PROTOCOL_AMCOR
+        bool "AMCOR"
+    config IR_AC_PROTOCOL_ARGO
+        bool "ARGO"
+    config IR_AC_PROTOCOL_BOSCH144
+        bool "BOSCH144"
+    config IR_AC_PROTOCOL_CARRIER_AC64
+        bool "CARRIER_AC64"
+    config IR_AC_PROTOCOL_COOLIX
+        bool "COOLIX"
+    config IR_AC_PROTOCOL_CORONA_AC
+        bool "CORONA_AC"
+    config IR_AC_PROTOCOL_DAIKIN
+        bool "DAIKIN"
+    config IR_AC_PROTOCOL_DAIKIN128
+        bool "DAIKIN128"
+    config IR_AC_PROTOCOL_DAIKIN152
+        bool "DAIKIN152"
+    config IR_AC_PROTOCOL_DAIKIN160
+        bool "DAIKIN160"
+    config IR_AC_PROTOCOL_DAIKIN176
+        bool "DAIKIN176"
+    config IR_AC_PROTOCOL_DAIKIN2
+        bool "DAIKIN2"
+    config IR_AC_PROTOCOL_DAIKIN216
+        bool "DAIKIN216"
+    config IR_AC_PROTOCOL_DAIKIN64
+        bool "DAIKIN64"
+    config IR_AC_PROTOCOL_DELONGHI_AC
+        bool "DELONGHI_AC"
+    config IR_AC_PROTOCOL_ECOCLIM
+        bool "ECOCLIM"
+    config IR_AC_PROTOCOL_ELECTRA_AC
+        bool "ELECTRA_AC"
+    config IR_AC_PROTOCOL_EUROM
+        bool "EUROM"
+    config IR_AC_PROTOCOL_FUJITSU_AC
+        bool "FUJITSU_AC"
+    config IR_AC_PROTOCOL_GOODWEATHER
+        bool "GOODWEATHER"
+    config IR_AC_PROTOCOL_GREE
+        bool "GREE"
+    config IR_AC_PROTOCOL_HAIER_AC
+        bool "HAIER_AC"
+    config IR_AC_PROTOCOL_HAIER_AC160
+        bool "HAIER_AC160"
+    config IR_AC_PROTOCOL_HAIER_AC176
+        bool "HAIER_AC176"
+    config IR_AC_PROTOCOL_HAIER_AC_YRW02
+        bool "HAIER_AC_YRW02"
+    config IR_AC_PROTOCOL_HITACHI_AC
+        bool "HITACHI_AC"
+    config IR_AC_PROTOCOL_HITACHI_AC1
+        bool "HITACHI_AC1"
+    config IR_AC_PROTOCOL_HITACHI_AC264
+        bool "HITACHI_AC264"
+    config IR_AC_PROTOCOL_HITACHI_AC296
+        bool "HITACHI_AC296"
+    config IR_AC_PROTOCOL_HITACHI_AC344
+        bool "HITACHI_AC344"
+    config IR_AC_PROTOCOL_HITACHI_AC424
+        bool "HITACHI_AC424"
+    config IR_AC_PROTOCOL_KELON
+        bool "KELON"
+    config IR_AC_PROTOCOL_KELVINATOR
+        bool "KELVINATOR"
+    config IR_AC_PROTOCOL_LG
+        bool "LG"
+    config IR_AC_PROTOCOL_LG2
+        bool "LG2"
+    config IR_AC_PROTOCOL_MIDEA
+        bool "MIDEA"
+    config IR_AC_PROTOCOL_MIRAGE
+        bool "MIRAGE"
+    config IR_AC_PROTOCOL_MITSUBISHI_AC
+        bool "MITSUBISHI_AC"
+    config IR_AC_PROTOCOL_MITSUBISHI112
+        bool "MITSUBISHI112"
+    config IR_AC_PROTOCOL_MITSUBISHI136
+        bool "MITSUBISHI136"
+    config IR_AC_PROTOCOL_MITSUBISHI_HEAVY_88
+        bool "MITSUBISHI_HEAVY_88"
+    config IR_AC_PROTOCOL_MITSUBISHI_HEAVY_152
+        bool "MITSUBISHI_HEAVY_152"
+    config IR_AC_PROTOCOL_NEOCLIMA
+        bool "NEOCLIMA"
+    config IR_AC_PROTOCOL_PANASONIC_AC
+        bool "PANASONIC_AC"
+    config IR_AC_PROTOCOL_PANASONIC_AC32
+        bool "PANASONIC_AC32"
+    config IR_AC_PROTOCOL_RHOSS
+        bool "RHOSS"
+    config IR_AC_PROTOCOL_SAMSUNG_AC
+        bool "SAMSUNG_AC"
+    config IR_AC_PROTOCOL_SANYO_AC
+        bool "SANYO_AC"
+    config IR_AC_PROTOCOL_SANYO_AC88
+        bool "SANYO_AC88"
+    config IR_AC_PROTOCOL_SHARP_AC
+        bool "SHARP_AC"
+    config IR_AC_PROTOCOL_TCL112AC
+        bool "TCL112AC"
+    config IR_AC_PROTOCOL_TECHNIBEL_AC
+        bool "TECHNIBEL_AC"
+    config IR_AC_PROTOCOL_TECO
+        bool "TECO"
+    config IR_AC_PROTOCOL_TEKNOPOINT
+        bool "TEKNOPOINT"
+    config IR_AC_PROTOCOL_TOSHIBA_AC
+        bool "TOSHIBA_AC"
+    config IR_AC_PROTOCOL_TRANSCOLD
+        bool "TRANSCOLD"
+    config IR_AC_PROTOCOL_TROTEC
+        bool "TROTEC"
+    config IR_AC_PROTOCOL_TROTEC_3550
+        bool "TROTEC_3550"
+    config IR_AC_PROTOCOL_TRUMA
+        bool "TRUMA"
+    config IR_AC_PROTOCOL_VESTEL_AC
+        bool "VESTEL_AC"
+    config IR_AC_PROTOCOL_VOLTAS
+        bool "VOLTAS"
+    config IR_AC_PROTOCOL_YORK
+        bool "YORK"
+    config IR_AC_PROTOCOL_WHIRLPOOL_AC
+        bool "WHIRLPOOL_AC"
+    endchoice
+
+    config IR_AC_PROTOCOL
+        string
+        default "AIRTON" if IR_AC_PROTOCOL_AIRTON
+        default "AIRWELL" if IR_AC_PROTOCOL_AIRWELL
+        default "AMCOR" if IR_AC_PROTOCOL_AMCOR
+        default "ARGO" if IR_AC_PROTOCOL_ARGO
+        default "BOSCH144" if IR_AC_PROTOCOL_BOSCH144
+        default "CARRIER_AC64" if IR_AC_PROTOCOL_CARRIER_AC64
+        default "COOLIX" if IR_AC_PROTOCOL_COOLIX
+        default "CORONA_AC" if IR_AC_PROTOCOL_CORONA_AC
+        default "DAIKIN" if IR_AC_PROTOCOL_DAIKIN
+        default "DAIKIN128" if IR_AC_PROTOCOL_DAIKIN128
+        default "DAIKIN152" if IR_AC_PROTOCOL_DAIKIN152
+        default "DAIKIN160" if IR_AC_PROTOCOL_DAIKIN160
+        default "DAIKIN176" if IR_AC_PROTOCOL_DAIKIN176
+        default "DAIKIN2" if IR_AC_PROTOCOL_DAIKIN2
+        default "DAIKIN216" if IR_AC_PROTOCOL_DAIKIN216
+        default "DAIKIN64" if IR_AC_PROTOCOL_DAIKIN64
+        default "DELONGHI_AC" if IR_AC_PROTOCOL_DELONGHI_AC
+        default "ECOCLIM" if IR_AC_PROTOCOL_ECOCLIM
+        default "ELECTRA_AC" if IR_AC_PROTOCOL_ELECTRA_AC
+        default "EUROM" if IR_AC_PROTOCOL_EUROM
+        default "FUJITSU_AC" if IR_AC_PROTOCOL_FUJITSU_AC
+        default "GOODWEATHER" if IR_AC_PROTOCOL_GOODWEATHER
+        default "GREE" if IR_AC_PROTOCOL_GREE
+        default "HAIER_AC" if IR_AC_PROTOCOL_HAIER_AC
+        default "HAIER_AC160" if IR_AC_PROTOCOL_HAIER_AC160
+        default "HAIER_AC176" if IR_AC_PROTOCOL_HAIER_AC176
+        default "HAIER_AC_YRW02" if IR_AC_PROTOCOL_HAIER_AC_YRW02
+        default "HITACHI_AC" if IR_AC_PROTOCOL_HITACHI_AC
+        default "HITACHI_AC1" if IR_AC_PROTOCOL_HITACHI_AC1
+        default "HITACHI_AC264" if IR_AC_PROTOCOL_HITACHI_AC264
+        default "HITACHI_AC296" if IR_AC_PROTOCOL_HITACHI_AC296
+        default "HITACHI_AC344" if IR_AC_PROTOCOL_HITACHI_AC344
+        default "HITACHI_AC424" if IR_AC_PROTOCOL_HITACHI_AC424
+        default "KELON" if IR_AC_PROTOCOL_KELON
+        default "KELVINATOR" if IR_AC_PROTOCOL_KELVINATOR
+        default "LG" if IR_AC_PROTOCOL_LG
+        default "LG2" if IR_AC_PROTOCOL_LG2
+        default "MIDEA" if IR_AC_PROTOCOL_MIDEA
+        default "MIRAGE" if IR_AC_PROTOCOL_MIRAGE
+        default "MITSUBISHI_AC" if IR_AC_PROTOCOL_MITSUBISHI_AC
+        default "MITSUBISHI112" if IR_AC_PROTOCOL_MITSUBISHI112
+        default "MITSUBISHI136" if IR_AC_PROTOCOL_MITSUBISHI136
+        default "MITSUBISHI_HEAVY_88" if IR_AC_PROTOCOL_MITSUBISHI_HEAVY_88
+        default "MITSUBISHI_HEAVY_152" if IR_AC_PROTOCOL_MITSUBISHI_HEAVY_152
+        default "NEOCLIMA" if IR_AC_PROTOCOL_NEOCLIMA
+        default "PANASONIC_AC" if IR_AC_PROTOCOL_PANASONIC_AC
+        default "PANASONIC_AC32" if IR_AC_PROTOCOL_PANASONIC_AC32
+        default "RHOSS" if IR_AC_PROTOCOL_RHOSS
+        default "SAMSUNG_AC" if IR_AC_PROTOCOL_SAMSUNG_AC
+        default "SANYO_AC" if IR_AC_PROTOCOL_SANYO_AC
+        default "SANYO_AC88" if IR_AC_PROTOCOL_SANYO_AC88
+        default "SHARP_AC" if IR_AC_PROTOCOL_SHARP_AC
+        default "TCL112AC" if IR_AC_PROTOCOL_TCL112AC
+        default "TECHNIBEL_AC" if IR_AC_PROTOCOL_TECHNIBEL_AC
+        default "TECO" if IR_AC_PROTOCOL_TECO
+        default "TEKNOPOINT" if IR_AC_PROTOCOL_TEKNOPOINT
+        default "TOSHIBA_AC" if IR_AC_PROTOCOL_TOSHIBA_AC
+        default "TRANSCOLD" if IR_AC_PROTOCOL_TRANSCOLD
+        default "TROTEC" if IR_AC_PROTOCOL_TROTEC
+        default "TROTEC_3550" if IR_AC_PROTOCOL_TROTEC_3550
+        default "TRUMA" if IR_AC_PROTOCOL_TRUMA
+        default "VESTEL_AC" if IR_AC_PROTOCOL_VESTEL_AC
+        default "VOLTAS" if IR_AC_PROTOCOL_VOLTAS
+        default "YORK" if IR_AC_PROTOCOL_YORK
+        default "WHIRLPOOL_AC" if IR_AC_PROTOCOL_WHIRLPOOL_AC
+
+    config IR_AC_PROTOCOL_MACRO
+        string
+        default "AIRTON" if IR_AC_PROTOCOL_AIRTON
+        default "AIRWELL" if IR_AC_PROTOCOL_AIRWELL
+        default "AMCOR" if IR_AC_PROTOCOL_AMCOR
+        default "ARGO" if IR_AC_PROTOCOL_ARGO
+        default "BOSCH144" if IR_AC_PROTOCOL_BOSCH144
+        default "CARRIER_AC64" if IR_AC_PROTOCOL_CARRIER_AC64
+        default "COOLIX" if IR_AC_PROTOCOL_COOLIX
+        default "CORONA_AC" if IR_AC_PROTOCOL_CORONA_AC
+        default "DAIKIN" if IR_AC_PROTOCOL_DAIKIN
+        default "DAIKIN128" if IR_AC_PROTOCOL_DAIKIN128
+        default "DAIKIN152" if IR_AC_PROTOCOL_DAIKIN152
+        default "DAIKIN160" if IR_AC_PROTOCOL_DAIKIN160
+        default "DAIKIN176" if IR_AC_PROTOCOL_DAIKIN176
+        default "DAIKIN2" if IR_AC_PROTOCOL_DAIKIN2
+        default "DAIKIN216" if IR_AC_PROTOCOL_DAIKIN216
+        default "DAIKIN64" if IR_AC_PROTOCOL_DAIKIN64
+        default "DELONGHI_AC" if IR_AC_PROTOCOL_DELONGHI_AC
+        default "ECOCLIM" if IR_AC_PROTOCOL_ECOCLIM
+        default "ELECTRA_AC" if IR_AC_PROTOCOL_ELECTRA_AC
+        default "EUROM" if IR_AC_PROTOCOL_EUROM
+        default "FUJITSU_AC" if IR_AC_PROTOCOL_FUJITSU_AC
+        default "GOODWEATHER" if IR_AC_PROTOCOL_GOODWEATHER
+        default "GREE" if IR_AC_PROTOCOL_GREE
+        default "HAIER_AC" if IR_AC_PROTOCOL_HAIER_AC
+        default "HAIER_AC160" if IR_AC_PROTOCOL_HAIER_AC160
+        default "HAIER_AC176" if IR_AC_PROTOCOL_HAIER_AC176
+        default "HAIER_AC_YRW02" if IR_AC_PROTOCOL_HAIER_AC_YRW02
+        default "HITACHI_AC" if IR_AC_PROTOCOL_HITACHI_AC
+        default "HITACHI_AC1" if IR_AC_PROTOCOL_HITACHI_AC1
+        default "HITACHI_AC264" if IR_AC_PROTOCOL_HITACHI_AC264
+        default "HITACHI_AC296" if IR_AC_PROTOCOL_HITACHI_AC296
+        default "HITACHI_AC344" if IR_AC_PROTOCOL_HITACHI_AC344
+        default "HITACHI_AC424" if IR_AC_PROTOCOL_HITACHI_AC424
+        default "KELON" if IR_AC_PROTOCOL_KELON
+        default "KELVINATOR" if IR_AC_PROTOCOL_KELVINATOR
+        default "LG" if IR_AC_PROTOCOL_LG
+        default "LG" if IR_AC_PROTOCOL_LG2
+        default "MIDEA" if IR_AC_PROTOCOL_MIDEA
+        default "MIRAGE" if IR_AC_PROTOCOL_MIRAGE
+        default "MITSUBISHI_AC" if IR_AC_PROTOCOL_MITSUBISHI_AC
+        default "MITSUBISHI112" if IR_AC_PROTOCOL_MITSUBISHI112
+        default "MITSUBISHI136" if IR_AC_PROTOCOL_MITSUBISHI136
+        default "MITSUBISHIHEAVY" if IR_AC_PROTOCOL_MITSUBISHI_HEAVY_88
+        default "MITSUBISHIHEAVY" if IR_AC_PROTOCOL_MITSUBISHI_HEAVY_152
+        default "NEOCLIMA" if IR_AC_PROTOCOL_NEOCLIMA
+        default "PANASONIC_AC" if IR_AC_PROTOCOL_PANASONIC_AC
+        default "PANASONIC_AC32" if IR_AC_PROTOCOL_PANASONIC_AC32
+        default "RHOSS" if IR_AC_PROTOCOL_RHOSS
+        default "SAMSUNG_AC" if IR_AC_PROTOCOL_SAMSUNG_AC
+        default "SANYO_AC" if IR_AC_PROTOCOL_SANYO_AC
+        default "SANYO_AC88" if IR_AC_PROTOCOL_SANYO_AC88
+        default "SHARP_AC" if IR_AC_PROTOCOL_SHARP_AC
+        default "TCL112AC" if IR_AC_PROTOCOL_TCL112AC
+        default "TECHNIBEL_AC" if IR_AC_PROTOCOL_TECHNIBEL_AC
+        default "TECO" if IR_AC_PROTOCOL_TECO
+        default "TEKNOPOINT" if IR_AC_PROTOCOL_TEKNOPOINT
+        default "TOSHIBA_AC" if IR_AC_PROTOCOL_TOSHIBA_AC
+        default "TRANSCOLD" if IR_AC_PROTOCOL_TRANSCOLD
+        default "TROTEC" if IR_AC_PROTOCOL_TROTEC
+        default "TROTEC_3550" if IR_AC_PROTOCOL_TROTEC_3550
+        default "TRUMA" if IR_AC_PROTOCOL_TRUMA
+        default "VESTEL_AC" if IR_AC_PROTOCOL_VESTEL_AC
+        default "VOLTAS" if IR_AC_PROTOCOL_VOLTAS
+        default "YORK" if IR_AC_PROTOCOL_YORK
+        default "WHIRLPOOL_AC" if IR_AC_PROTOCOL_WHIRLPOOL_AC
+
+    config IR_AC_MODEL
+        int "Air conditioner model"
+        default 1
+        range -1 32767
+        help
+            Model of the remote for protocols with several variants (IRremoteESP8266 *_ac_remote_model_t),
+            -1 or 1 for the default one. FUJITSU_AC: 1 ARRAH2E, 2 ARDB1, 3 ARREB1E, 4 ARJW2, 5 ARRY4,
+            6 ARREW4E. See SupportedProtocols.md of IRremoteESP8266 for the other protocols.
+
+    config IR_TX_GPIO
+        int "IR transmitter GPIO"
+        default 4
+        range 0 ENV_GPIO_OUT_RANGE_MAX
+        help
+            GPIO driving the IR LED (through a transistor). Do not use the button or the status LED GPIO.
+
+    config IR_TX_INVERTED
+        bool "Inverted IR output"
+        default n
+        help
+            The IR LED is on when the GPIO is LOW. Only for driver circuits which need it.
+
+endmenu

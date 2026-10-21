@@ -886,7 +886,6 @@ CONFIG_SECURE_ROM_DL_MODE_ENABLED=y
 #
 # default:
 CONFIG_APP_COMPILE_TIME_DATE=y
-# default:
 # CONFIG_APP_EXCLUDE_PROJECT_VER_VAR is not set
 # default:
 # CONFIG_APP_EXCLUDE_PROJECT_NAME_VAR is not set
@@ -1053,10 +1052,8 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
-# Thermostat Configuration
+# Air Conditioner Configuration
 #
-# default:
-CONFIG_THERMOSTAT_ENABLE_COOLING=y
 # default:
 CONFIG_THERMOSTAT_ENABLE_AUTO=y
 # default:
@@ -1065,15 +1062,9 @@ CONFIG_THERMOSTAT_MIN_SETPOINT=16
 CONFIG_THERMOSTAT_MAX_SETPOINT=30
 # default:
 CONFIG_THERMOSTAT_DEAD_BAND=0
-# default:
 # CONFIG_THERMOSTAT_TRACE_LOGS is not set
-CONFIG_THERMOSTAT_HEAT_RELAY_GPIO=2
-CONFIG_THERMOSTAT_COOL_RELAY_GPIO=3
-# default:
-CONFIG_THERMOSTAT_RELAY_ACTIVE_HIGH=y
 CONFIG_THERMOSTAT_STATUS_LED_GPIO=8
 # default:
-CONFIG_THERMOSTAT_HYSTERESIS=50
 CONFIG_THERMOSTAT_TEMPERATURE_STEP=50
 CONFIG_THERMOSTAT_TEMPERATURE_CALIBRATION=0
 CONFIG_THERMOSTAT_SENSOR_MIN_INTERVAL=10
@@ -1081,10 +1072,10 @@ CONFIG_THERMOSTAT_SENSOR_MIN_INTERVAL=10
 CONFIG_THERMOSTAT_SENSOR_MAX_INTERVAL=60
 # default:
 CONFIG_THERMOSTAT_SENSOR_TIMEOUT=300
-# end of Thermostat Configuration
+# end of Air Conditioner Configuration
 
 #
-# Thermostat Device Information
+# Air Conditioner Device Information
 #
 # default:
 CONFIG_THERMOSTAT_VENDOR_NAME="DIY"
@@ -1094,7 +1085,7 @@ CONFIG_THERMOSTAT_PRODUCT_NAME="Air Conditioner"
 CONFIG_THERMOSTAT_HARDWARE_VERSION_STRING="ESP32-C6"
 # default:
 CONFIG_THERMOSTAT_SERIAL_NUMBER_PREFIX="ACIR-"
-# end of Thermostat Device Information
+# end of Air Conditioner Device Information
 
 #
 # Compiler options
@@ -5174,6 +5165,151 @@ CONFIG_ESP_MATTER_CONSOLE_MAX_COMMANDS=10
 # default:
 # CONFIG_ESP_MATTER_OTA_PROVIDER_ENABLED is not set
 # end of ESP Matter OTA Provider
+
+#
+# IR air conditioner
+#
+# default:
+# CONFIG_IR_AC_PROTOCOL_AIRTON is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_AIRWELL is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_AMCOR is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_ARGO is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_BOSCH144 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_CARRIER_AC64 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_COOLIX is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_CORONA_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_DAIKIN is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_DAIKIN128 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_DAIKIN152 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_DAIKIN160 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_DAIKIN176 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_DAIKIN2 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_DAIKIN216 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_DAIKIN64 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_DELONGHI_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_ECOCLIM is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_ELECTRA_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_EUROM is not set
+# default:
+CONFIG_IR_AC_PROTOCOL_FUJITSU_AC=y
+# default:
+# CONFIG_IR_AC_PROTOCOL_GOODWEATHER is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_GREE is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_HAIER_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_HAIER_AC160 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_HAIER_AC176 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_HAIER_AC_YRW02 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_HITACHI_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_HITACHI_AC1 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_HITACHI_AC264 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_HITACHI_AC296 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_HITACHI_AC344 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_HITACHI_AC424 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_KELON is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_KELVINATOR is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_LG is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_LG2 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_MIDEA is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_MIRAGE is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_MITSUBISHI_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_MITSUBISHI112 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_MITSUBISHI136 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_MITSUBISHI_HEAVY_88 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_MITSUBISHI_HEAVY_152 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_NEOCLIMA is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_PANASONIC_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_PANASONIC_AC32 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_RHOSS is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_SAMSUNG_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_SANYO_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_SANYO_AC88 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_SHARP_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_TCL112AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_TECHNIBEL_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_TECO is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_TEKNOPOINT is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_TOSHIBA_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_TRANSCOLD is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_TROTEC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_TROTEC_3550 is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_TRUMA is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_VESTEL_AC is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_VOLTAS is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_YORK is not set
+# default:
+# CONFIG_IR_AC_PROTOCOL_WHIRLPOOL_AC is not set
+# default:
+CONFIG_IR_AC_PROTOCOL="FUJITSU_AC"
+# default:
+CONFIG_IR_AC_PROTOCOL_MACRO="FUJITSU_AC"
+# default:
+CONFIG_IR_AC_MODEL=1
+# default:
+CONFIG_IR_TX_GPIO=4
+# default:
+# CONFIG_IR_TX_INVERTED is not set
+# end of IR air conditioner
 
 #
 # IoT Button

@@ -59,7 +59,7 @@
 #define APP_TRACE(tag, format, ...) do {} while (0)
 #endif
 
-/* Distinctive log lines for the values that matter: sensor values, relays, setpoints and mode.
+/* Distinctive log lines for the values that matter: sensor values, power, mode, setpoints and fan.
  * They all use the THERMOSTAT tag, so they can also be filtered (e.g. `idf.py monitor | grep THERMOSTAT`). */
 #define APP_LOG_TAG "THERMOSTAT"
 #define APP_LOG(format, ...) ESP_LOGI(APP_LOG_TAG, "========== " format, ##__VA_ARGS__)
@@ -79,7 +79,7 @@ typedef void *app_driver_handle_t;
 
 /** Initialize the thermostat driver
  *
- * This initializes the heating/cooling relays, the status LED and the button.
+ * This initializes the status LED and the button.
  *
  * @return Handle on success.
  * @return NULL in case of failure.
@@ -98,7 +98,7 @@ void app_driver_thermostat_start(uint16_t endpoint_id);
 /** Re-evaluate the thermostat
  *
  * Reads the system mode and the setpoints from the data model, compares them with the last
- * temperature received from the remote sensor and drives the relays and the LED.
+ * temperature received from the remote sensor and updates the running state and the LED.
  * It is scheduled on the Matter thread, so it is safe to call from any task.
  */
 void app_driver_thermostat_schedule_update();
@@ -128,7 +128,7 @@ void app_driver_bindings_loaded();
 /** Identify: blink the status LED until app_driver_identify_stop(). Call it on the Matter thread. */
 void app_driver_identify_start();
 
-/** Identify: stop blinking and show the relay state again. Call it on the Matter thread. */
+/** Identify: stop blinking and show the mode again. Call it on the Matter thread. */
 void app_driver_identify_stop();
 
 /** Identify TriggerEffect: run a short LED pattern for the effect. Call it on the Matter thread. */

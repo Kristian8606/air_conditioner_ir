@@ -185,18 +185,16 @@ static void app_thermostat_add_optional_attributes(cluster_t *cluster)
     thermostat_attr::create_abs_max_heat_setpoint_limit(cluster, THERMOSTAT_ABS_MAX_HEAT_SETPOINT);
     thermostat_attr::create_min_heat_setpoint_limit(cluster, THERMOSTAT_ABS_MIN_HEAT_SETPOINT);
     thermostat_attr::create_max_heat_setpoint_limit(cluster, THERMOSTAT_ABS_MAX_HEAT_SETPOINT);
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
     thermostat_attr::create_abs_min_cool_setpoint_limit(cluster, THERMOSTAT_ABS_MIN_COOL_SETPOINT);
     thermostat_attr::create_abs_max_cool_setpoint_limit(cluster, THERMOSTAT_ABS_MAX_COOL_SETPOINT);
     thermostat_attr::create_min_cool_setpoint_limit(cluster, THERMOSTAT_ABS_MIN_COOL_SETPOINT);
     thermostat_attr::create_max_cool_setpoint_limit(cluster, THERMOSTAT_ABS_MAX_COOL_SETPOINT);
-#endif
 #if CONFIG_THERMOSTAT_ENABLE_AUTO
     /* ThermostatRunningMode is mandatory with the AutoMode feature. */
     thermostat_attr::create_thermostat_running_mode(cluster,
         chip::to_underlying(Thermostat::ThermostatRunningModeEnum::kOff));
 #endif
-    /* Which relay is currently switched on. */
+    /* Heat/Cool/Fan, derived from the mode of the air conditioner (app_driver.cpp). */
     thermostat_attr::create_thermostat_running_state(cluster, 0);
     /* LocalTemperature is not measured on this device, it comes from the bound remote sensor. */
     thermostat_attr::create_remote_sensing(cluster,
@@ -249,15 +247,10 @@ extern "C" void app_main()
     /* Heating and cooling setpoints are two independent attributes. Heat mode only uses the heating
      * setpoint, Cool mode only uses the cooling setpoint and Auto uses both of them as a range. */
     thermostat_config.thermostat.features.heating.occupied_heating_setpoint = THERMOSTAT_DEFAULT_HEAT_SETPOINT;
-#if CONFIG_THERMOSTAT_ENABLE_COOLING
     thermostat_config.thermostat.control_sequence_of_operation =
         chip::to_underlying(Thermostat::ControlSequenceOfOperationEnum::kCoolingAndHeating);
     thermostat_config.thermostat.feature_flags |= cluster::thermostat::feature::cooling::get_id();
     thermostat_config.thermostat.features.cooling.occupied_cooling_setpoint = THERMOSTAT_DEFAULT_COOL_SETPOINT;
-#else
-    thermostat_config.thermostat.control_sequence_of_operation =
-        chip::to_underlying(Thermostat::ControlSequenceOfOperationEnum::kHeatingOnly);
-#endif
 #if CONFIG_THERMOSTAT_ENABLE_AUTO
     thermostat_config.thermostat.feature_flags |= cluster::thermostat::feature::auto_mode::get_id();
     thermostat_config.thermostat.features.auto_mode.min_setpoint_dead_band = THERMOSTAT_MIN_SETPOINT_DEAD_BAND;
