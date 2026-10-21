@@ -1,0 +1,192 @@
+menu "Example Configuration"
+
+    visible if CUSTOM_COMMISSIONABLE_DATA_PROVIDER
+
+    config DYNAMIC_PASSCODE_COMMISSIONABLE_DATA_PROVIDER
+        bool "Enable Dynamic Passcode Commissionable Data Provider"
+        depends on CUSTOM_COMMISSIONABLE_DATA_PROVIDER
+        default y
+
+    config DYNAMIC_PASSCODE_PROVIDER_DISCRIMINATOR
+        int "Discriminator in Dynamic Passcode Commissionable Data Provider"
+        depends on DYNAMIC_PASSCODE_COMMISSIONABLE_DATA_PROVIDER
+        default 3840
+        range 0 4095
+        help
+            Fixed discriminator in custom dynamic passcode commissionable data provider
+
+    config DYNAMIC_PASSCODE_PROVIDER_ITERATIONS
+        int "Iterations in Dynamic Passcode Commissionable Data Provider"
+        depends on DYNAMIC_PASSCODE_COMMISSIONABLE_DATA_PROVIDER
+        default 10000
+        range 1000 100000
+        help
+            Fixed iterations in custom dynamic passcode commissionable data provider
+
+    config DYNAMIC_PASSCODE_PROVIDER_SALT_BASE64
+        string "Base64-Encoded Salt in Dynamic Passcode Commissionable Data Provider"
+        depends on DYNAMIC_PASSCODE_COMMISSIONABLE_DATA_PROVIDER
+        default "0NHS09TV1tfY2drb3N3e36ChoqOkpaanqKmqq6ytrq8="
+        help
+            Fixed salt in custom dynamic passcode commissionable data provider. It should be a Base64-Encoded string.
+
+endmenu
+
+menu "Thermostat Configuration"
+
+    config THERMOSTAT_ENABLE_COOLING
+        bool "Enable cooling"
+        default y
+        help
+            Adds the Cooling feature to the Thermostat cluster (Off/Heat/Cool system modes)
+            and drives the cooling relay. Disable it for a heating only thermostat (Off/Heat).
+
+    config THERMOSTAT_ENABLE_AUTO
+        bool "Enable Auto mode"
+        depends on THERMOSTAT_ENABLE_COOLING
+        default y
+        help
+            Adds the AutoMode feature (Off/Heat/Cool/Auto). In Auto the thermostat uses the
+            heating setpoint to decide when to heat and the cooling setpoint to decide when to cool.
+            The two setpoints are kept apart by MinSetpointDeadBand.
+
+    config THERMOSTAT_MIN_SETPOINT
+        int "Lowest setpoint (degC)"
+        default 16
+        range 5 30
+        help
+            Lowest temperature which can be set in the controllers (Apple Home, Home Assistant).
+
+    config THERMOSTAT_MAX_SETPOINT
+        int "Highest setpoint (degC)"
+        default 30
+        range 10 35
+        help
+            Highest temperature which can be set in the controllers.
+
+    config THERMOSTAT_DEAD_BAND
+        int "Auto dead band (0.1 degC)"
+        depends on THERMOSTAT_ENABLE_AUTO
+        default 0
+        range 0 50
+        help
+            Minimum distance between the heating and the cooling setpoint (MinSetpointDeadBand), 10 = 1.0 degC.
+            The heating range ends this much below the highest setpoint and the cooling range starts this much
+            above the lowest one, otherwise the Thermostat server would reject a heating setpoint near the
+            maximum even in Heat mode. Apple Home offers one range for all modes, so with a dead band the
+            highest values of the heating slider are rejected and the slider jumps back.
+            With 0 both setpoints use the full range. Heating and cooling still never run together: they use
+            separate setpoints, the hysteresis and an interlock of the relays.
+
+    config THERMOSTAT_TRACE_LOGS
+        bool "Trace attribute writes (debug)"
+        default n
+        help
+            Temporary debug logs with the "[TRACE]" prefix: every PRE_UPDATE/POST_UPDATE of a Thermostat
+            attribute and every attribute::update() of the application, with the value and the reason.
+            The chip[EM] line just before a POST_UPDATE shows which controller (fabric:node) wrote it.
+
+    config THERMOSTAT_HEAT_RELAY_GPIO
+        int "Heating relay GPIO"
+        default 2
+        range 0 ENV_GPIO_OUT_RANGE_MAX
+        help
+            GPIO connected to the heating relay input. Do not use the button or the LED GPIO.
+
+    config THERMOSTAT_COOL_RELAY_GPIO
+        int "Cooling relay GPIO"
+        depends on THERMOSTAT_ENABLE_COOLING
+        default 3
+        range 0 ENV_GPIO_OUT_RANGE_MAX
+        help
+            GPIO connected to the cooling relay input. Do not use the button or the LED GPIO.
+
+    config THERMOSTAT_RELAY_ACTIVE_HIGH
+        bool "Relays are active HIGH"
+        default y
+        help
+            Disable this for relay modules which switch on with a LOW level on the input.
+
+    config THERMOSTAT_STATUS_LED_GPIO
+        int "WS2812 status LED GPIO"
+        default 8
+        range -1 ENV_GPIO_OUT_RANGE_MAX
+        help
+            Data GPIO of the addressable WS2812 LED (GPIO 8 on ESP32-C6-DevKitC/M). Set -1 to disable.
+            Orange: heating relay on, Blue: cooling relay on, White: both relays off.
+
+    config THERMOSTAT_HYSTERESIS
+        int "Hysteresis (0.01 degC)"
+        default 50
+        range 0 500
+        help
+            Heating turns ON when temperature <= heating setpoint - hysteresis and OFF when it reaches
+            the heating setpoint. Cooling turns ON when temperature >= cooling setpoint + hysteresis and
+            OFF when it drops to the cooling setpoint. Default 50 means 0.5 degC.
+
+    config THERMOSTAT_TEMPERATURE_STEP
+        int "Temperature rounding step (0.01 degC)"
+        default 50
+        range 1 100
+        help
+            The temperature from the sensor is rounded to the nearest multiple of this step before it is
+            shown as LocalTemperature and compared with the setpoints. Default 50 means 0.5 degC
+            (24.20 -> 24.0, 24.30 -> 24.5). 1 keeps the value exactly as the sensor reports it.
+
+    config THERMOSTAT_TEMPERATURE_CALIBRATION
+        int "Temperature calibration (0.1 degC)"
+        default 0
+        range -25 25
+        help
+            Initial LocalTemperatureCalibration: added to the sensor temperature before the rounding.
+            For example -5 means -0.5 degC. Used on the very first boot (or after a factory reset) only,
+            afterwards the value written by a controller is restored from NVS.
+
+    config THERMOSTAT_SENSOR_MIN_INTERVAL
+        int "Sensor subscription min interval (seconds)"
+        default 5
+        range 0 60
+
+    config THERMOSTAT_SENSOR_MAX_INTERVAL
+        int "Sensor subscription max interval (seconds)"
+        default 60
+        range 10 3600
+        help
+            Requested max reporting interval of the subscription to the remote sensor. The sensor
+            sends a report at least this often, even when the value does not change.
+
+    config THERMOSTAT_SENSOR_TIMEOUT
+        int "Sensor timeout (seconds)"
+        default 300
+        range 30 86400
+        help
+            If no report is received from the temperature sensor for this time, the reading is
+            treated as unknown and both relays are switched OFF. Must be larger than the max interval.
+
+endmenu
+
+menu "Thermostat Device Information"
+
+    config THERMOSTAT_VENDOR_NAME
+        string "Vendor name"
+        default "DIY"
+        help
+            Shown as Manufacturer in the controllers (BasicInformation VendorName).
+
+    config THERMOSTAT_PRODUCT_NAME
+        string "Product name"
+        default "Air Conditioner"
+        help
+            Shown as Model in the controllers (BasicInformation ProductName and ProductLabel).
+
+    config THERMOSTAT_HARDWARE_VERSION_STRING
+        string "Hardware version"
+        default "ESP32-C6"
+
+    config THERMOSTAT_SERIAL_NUMBER_PREFIX
+        string "Serial number prefix"
+        default "ACIR-"
+        help
+            The serial number is this prefix followed by the MAC address of the chip, unique for every board.
+
+endmenu
