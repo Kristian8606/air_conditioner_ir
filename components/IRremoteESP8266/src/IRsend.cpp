@@ -51,7 +51,7 @@ void IRsend::begin() {
 #ifdef IRREMOTE_ESP_IDF
   // ESP-IDF port: the RMT channel owns the pin, it is created when the first
   // message is sent.
-  _rmt_symbols.reserve(300);
+  _rmt_symbols.reserve(512);
 #else  // IRREMOTE_ESP_IDF
 #ifndef UNIT_TEST
   pinMode(IRpin, OUTPUT);

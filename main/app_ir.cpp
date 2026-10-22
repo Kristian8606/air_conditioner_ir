@@ -50,10 +50,8 @@ static const char *TAG = "app_ir";
 #define APP_IR_RX_DECODE_ALL false
 #endif
 
-#define APP_IR_TASK_STACK_SIZE 4096
-/* Same priority as the Matter task (CONFIG_CHIP_TASK_PRIORITY 1): the RMT keeps the IR timing, the IR tasks must
- * not hold up Matter (subscriptions and sessions of the controllers) */
-#define APP_IR_TASK_PRIORITY 1
+#define APP_IR_TASK_STACK_SIZE 6144
+#define APP_IR_TASK_PRIORITY 5
 /* Moving a slider writes several values in a row: only the last one is sent, after this pause */
 #define APP_IR_SETTLE_MS 500
 
@@ -169,14 +167,17 @@ static void app_ir_task(void *arg)
  * IR receiver: decode and log what the original remote (or this device) sends
  ******************************************************************************/
 
-#define APP_IR_RX_TASK_STACK_SIZE 5120
-#define APP_IR_RX_TASK_PRIORITY 1
+#define APP_IR_RX_TASK_STACK_SIZE 8192
+#define APP_IR_RX_TASK_PRIORITY 4
 /* A space longer than this ends a message (kTimeoutMs of IRremoteESP8266) */
 #define APP_IR_RX_IDLE_US 15000
-/* Fujitsu: 259 durations. RAM is short next to Matter and Thread, keep the buffers small */
-#define APP_IR_RX_MAX_DURATIONS 1024
+#define APP_IR_RX_MAX_DURATIONS 2048
 /* Fewer durations are noise (e.g. a light switched on) */
 #define APP_IR_RX_MIN_DURATIONS 6
+/* Decoder tolerance in % (library default 25). Receiver modules shorten the marks when the remote is far away or
+ * at an angle: Fujitsu marks of 448 us arrive as 360-380 us and failed with 25 %. 0 and 1 spaces are far apart
+ * (390 / 1182 us), so 40 % is still unambiguous. */
+#define APP_IR_RX_TOLERANCE 40
 /* A message ending this soon after our own transmission is probably our own one */
 #define APP_IR_RX_OWN_US 500000
 
@@ -319,6 +320,7 @@ static void app_ir_rx_task(void *arg)
     /* Only used to decode: the capture comes from the RMT, enableIRIn() is not called */
     IRrecv irrecv(CONFIG_IR_RX_GPIO >= 0 ? CONFIG_IR_RX_GPIO : 0, APP_IR_RX_MAX_DURATIONS + 2, APP_IR_RX_IDLE_US / 1000,
                   false);
+    irrecv.setTolerance(APP_IR_RX_TOLERANCE);
 
     bool receiver = CONFIG_IR_RX_GPIO >= 0;
     if (receiver && !ir_rmt_rx_start(CONFIG_IR_RX_GPIO, APP_IR_RX_IDLE_US)) {
@@ -341,8 +343,8 @@ static void app_ir_rx_task(void *arg)
         if (count < APP_IR_RX_MIN_DURATIONS) {
             continue;
         }
-        int64_t last_tx = ir_rmt_tx_last_end_us();
-        bool own = last_tx != 0 && esp_timer_get_time() - last_tx < APP_IR_RX_OWN_US;
+        /* The echo window starts before our message is sent: no race with the IR task */
+        bool own = ir_rmt_tx_echo_window(APP_IR_RX_OWN_US);
         decode_results results;
         if (!app_ir_decode_log(irrecv, "[IR RX]", usecs, count, own, results) || own) {
             continue;   /* Our own message (reflected or from the LED next to the receiver) is not a remote */

@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+#include <driver/gpio.h>
 #include <driver/rmt_rx.h>
 #include <esp_log.h>
 #include <freertos/queue.h>
@@ -16,8 +17,8 @@ static const char *TAG = "ir_rmt_rx";
 #define IR_RMT_RX_RESOLUTION_HZ 1000000
 /* Shorter pulses are noise. The filter counts in the group clock (max 255 ticks), 1 us is safe for all of them */
 #define IR_RMT_RX_GLITCH_NS 1000
-/* Longest message kept: 512 symbols = 1024 durations (Fujitsu: 130 symbols). RAM is short next to Matter. */
-#define IR_RMT_RX_FRAME_SYMBOLS 512
+/* Longest air conditioner message (e.g. Daikin 312 bits with several frames): 1024 symbols = 2048 durations */
+#define IR_RMT_RX_FRAME_SYMBOLS 1024
 /* Ping-pong: the driver fills this buffer and calls the callback for every part */
 #define IR_RMT_RX_CHUNK_SYMBOLS 64
 
@@ -100,6 +101,8 @@ bool ir_rmt_rx_start(uint16_t gpio, uint32_t idle_us)
     if (!ir_rmt_rx_arm()) {
         return false;
     }
+    /* Without a receiver module (or before it powers up) the input would float and pick up mains hum */
+    gpio_pullup_en(static_cast<gpio_num_t>(gpio));
     ESP_LOGI(TAG, "IR receiver on GPIO%u", gpio);
     return true;
 }

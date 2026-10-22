@@ -36,4 +36,8 @@ void ir_rmt_tx_set_monitor(ir_rmt_tx_monitor_t monitor);
 /// An IR receiver next to the transmitter also receives the own messages.
 int64_t ir_rmt_tx_last_end_us(void);
 
+/// true while a message is being sent and for echo_us after its expected end. Set before the message is
+/// sent, so it does not depend on when the sending task runs again.
+bool ir_rmt_tx_echo_window(int64_t echo_us);
+
 #endif  // IRREMOTE_ESP_IDF_IR_RMT_TX_H_

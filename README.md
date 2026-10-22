@@ -16,7 +16,7 @@ conditioner does (log `[IR]`):
 |-----------|-------------------------------------------------------------------------------------|
 | Power     | On/Off on and SystemMode not Off                                                    |
 | Mode      | SystemMode: Heat, Cool, Auto (Dry and FanOnly if a controller sets them)            |
-| Setpoint  | Heat: heating setpoint, Cool/Dry/Fan: cooling setpoint, Auto: middle of the two. Rounded to a whole degree (`IR_AC_HALF_DEGREES` for remotes with 0.5 °C) |
+| Setpoint  | Heat: heating setpoint, Cool/Dry/Fan: cooling setpoint, Auto: middle of the two. Sent in whole degrees (22.5 → 23), Matter keeps the value as written (`IR_AC_HALF_DEGREES` for remotes with 0.5 °C) |
 | Fan       | FanMode Low/Medium/High/Auto (Off is sent as Low: a running unit always runs its fan) |
 
 -   Only a change is sent: the sensor reports do not send anything. While the unit is off, changes of the mode,

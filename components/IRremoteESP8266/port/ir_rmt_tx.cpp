@@ -27,6 +27,13 @@ static uint8_t ir_carrier_duty = 0;
 static SemaphoreHandle_t ir_mutex = nullptr;
 static bool ir_channel_enabled = false;
 static volatile int64_t ir_last_end_us = 0;
+static volatile int64_t ir_expected_end_us = 0;   /* Set before sending: now + duration of the message */
+
+bool ir_rmt_tx_echo_window(int64_t echo_us)
+{
+    int64_t end = ir_expected_end_us > ir_last_end_us ? ir_expected_end_us : ir_last_end_us;
+    return end != 0 && esp_timer_get_time() < end + echo_us;
+}
 static ir_rmt_tx_monitor_t ir_monitor = nullptr;
 
 void ir_rmt_tx_set_monitor(ir_rmt_tx_monitor_t monitor)
@@ -173,6 +180,9 @@ bool ir_rmt_tx_send(uint16_t gpio, bool inverted, const uint32_t *symbols, size_
         if (ir_monitor) {
             ir_monitor(symbols, count);
         }
+        /* Before the transmission: a receiver next to the LED reports the echo 15 ms after the end, maybe before
+         * this task runs again after rmt_tx_wait_all_done() */
+        ir_expected_end_us = esp_timer_get_time() + total_us;
 
         rmt_transmit_config_t transmit_config = {};
         transmit_config.loop_count = 0;

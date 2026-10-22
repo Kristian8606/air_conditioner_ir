@@ -408,6 +408,11 @@ static void app_driver_ir_update(bool power, Thermostat::SystemModeEnum mode, in
     }
     }
 
+#if !CONFIG_IR_AC_HALF_DEGREES
+    /* What is sent: whole degrees (the state is compared with what the receiver decodes) */
+    state.setpoint = (int16_t)((state.setpoint + 50) / 100 * 100);
+#endif
+
     /* Nothing is sent on boot: the air conditioner keeps its own state over a reboot or an OTA update of the
      * ESP32, sending it again would only make it beep. The first state is just remembered. */
     if (!ir_have_last) {
@@ -456,6 +461,8 @@ static void app_driver_thermostat_update(intptr_t arg)
                                                        THERMOSTAT_DEFAULT_HEAT_SETPOINT);
     int16_t cooling_setpoint = app_driver_get_setpoint(Thermostat::Attributes::OccupiedCoolingSetpoint::Id,
                                                        THERMOSTAT_DEFAULT_COOL_SETPOINT);
+    /* The setpoints stay as the controller wrote them (e.g. 22.5). Changing a value right after a controller wrote it
+     * made Apple Home show "Updating" / "No Response": only the IR message is rounded to whole degrees. */
 
     APP_TRACE(TAG, "control reads mode %u, heat %d, cool %d", chip::to_underlying(system_mode), heating_setpoint,
               cooling_setpoint);
@@ -522,6 +529,12 @@ static void app_driver_remote_apply(intptr_t arg)
     }
     app_ir_state_t state = remote_state;
     static const char *const fan_names[] = {"Auto", "Low", "Medium", "High"};
+    /* Our own message (an echo the receiver could not tell apart), or the remote sent what the unit already has:
+     * Matter already is in this state, writing it again would only disturb the controllers */
+    if (ir_have_last && app_driver_ir_state_equal(state, ir_last)) {
+        APP_LOG("[REMOTE]   same state as last sent, Matter not changed");
+        return;
+    }
     APP_LOG("[REMOTE]   power %s, mode %s, %d C, fan %s -> Matter (no IR sent back)", state.power ? "ON" : "OFF",
             app_system_mode_name(chip::to_underlying(app_driver_remote_system_mode(state.mode))), state.setpoint / 100,
             fan_names[state.fan]);
@@ -542,17 +555,24 @@ static void app_driver_remote_apply(intptr_t arg)
             val = esp_matter_enum8(chip::to_underlying(mode));
             app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::SystemMode::Id, &val, "original remote");
         }
+        /* Only a changed value is written */
         if (state.mode == APP_IR_MODE_HEAT || state.mode == APP_IR_MODE_AUTO) {
-            val = esp_matter_int16(app_driver_clamp(state.setpoint, THERMOSTAT_ABS_MIN_HEAT_SETPOINT,
-                                                    THERMOSTAT_ABS_MAX_HEAT_SETPOINT));
-            app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::OccupiedHeatingSetpoint::Id, &val,
-                                        "original remote");
+            int16_t setpoint = app_driver_clamp(state.setpoint, THERMOSTAT_ABS_MIN_HEAT_SETPOINT,
+                                                THERMOSTAT_ABS_MAX_HEAT_SETPOINT);
+            if (app_driver_get_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id, setpoint) != setpoint) {
+                val = esp_matter_int16(setpoint);
+                app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::OccupiedHeatingSetpoint::Id, &val,
+                                            "original remote");
+            }
         }
         if (state.mode != APP_IR_MODE_HEAT) {
-            val = esp_matter_int16(app_driver_clamp(state.setpoint, THERMOSTAT_ABS_MIN_COOL_SETPOINT,
-                                                    THERMOSTAT_ABS_MAX_COOL_SETPOINT));
-            app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::OccupiedCoolingSetpoint::Id, &val,
-                                        "original remote");
+            int16_t setpoint = app_driver_clamp(state.setpoint, THERMOSTAT_ABS_MIN_COOL_SETPOINT,
+                                                THERMOSTAT_ABS_MAX_COOL_SETPOINT);
+            if (app_driver_get_setpoint(Thermostat::Attributes::OccupiedCoolingSetpoint::Id, setpoint) != setpoint) {
+                val = esp_matter_int16(setpoint);
+                app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::OccupiedCoolingSetpoint::Id, &val,
+                                            "original remote");
+            }
         }
         FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
         if (fan) {
