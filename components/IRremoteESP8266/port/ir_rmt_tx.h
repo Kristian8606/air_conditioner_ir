@@ -32,10 +32,7 @@ bool ir_rmt_tx_send(uint16_t gpio, bool inverted, const uint32_t *symbols, size_
 typedef void (*ir_rmt_tx_monitor_t)(const uint32_t *symbols, size_t count);
 void ir_rmt_tx_set_monitor(ir_rmt_tx_monitor_t monitor);
 
-/// esp_timer_get_time() when the last message had been sent (0: nothing sent yet).
-/// An IR receiver next to the transmitter also receives the own messages.
-int64_t ir_rmt_tx_last_end_us(void);
-
+/// An IR receiver next to the transmitter also receives the own messages:
 /// true while a message is being sent and for echo_us after its expected end. Set before the message is
 /// sent, so it does not depend on when the sending task runs again.
 bool ir_rmt_tx_echo_window(int64_t echo_us);

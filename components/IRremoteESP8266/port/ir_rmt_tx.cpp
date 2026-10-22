@@ -34,16 +34,12 @@ bool ir_rmt_tx_echo_window(int64_t echo_us)
     int64_t end = ir_expected_end_us > ir_last_end_us ? ir_expected_end_us : ir_last_end_us;
     return end != 0 && esp_timer_get_time() < end + echo_us;
 }
+
 static ir_rmt_tx_monitor_t ir_monitor = nullptr;
 
 void ir_rmt_tx_set_monitor(ir_rmt_tx_monitor_t monitor)
 {
     ir_monitor = monitor;
-}
-
-int64_t ir_rmt_tx_last_end_us(void)
-{
-    return ir_last_end_us;
 }
 
 static void ir_rmt_tx_delete()
@@ -171,11 +167,13 @@ bool ir_rmt_tx_send(uint16_t gpio, bool inverted, const uint32_t *symbols, size_
                 first[i] = duration;
             }
         }
+#if CONFIG_IR_VERBOSE_LOGS
         ESP_LOGI(TAG, "Sending %u symbols, %" PRIu32 " us, on GPIO%u%s, first: %c%" PRIu32 " %c%" PRIu32 " %c%" PRIu32
                  " %c%" PRIu32 " us", (unsigned)count, total_us, gpio, inverted ? " (inverted)" : "",
                  (symbols[0] >> 15) & 1 ? '+' : '-', first[0], count > 1 && ((symbols[1] >> 15) & 1) ? '+' : '-',
                  first[1], count > 2 && ((symbols[2] >> 15) & 1) ? '+' : '-', first[2],
                  count > 3 && ((symbols[3] >> 15) & 1) ? '+' : '-', first[3]);
+#endif
 
         if (ir_monitor) {
             ir_monitor(symbols, count);

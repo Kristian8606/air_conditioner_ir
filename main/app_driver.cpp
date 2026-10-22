@@ -8,7 +8,6 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
-#include <driver/gpio.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -355,85 +354,6 @@ static app_ir_fan_t app_driver_get_fan()
     }
 }
 
-/* The state the air conditioner is in as far as we know: the last one sent, or received from its own remote */
-static bool ir_have_last = false;
-static app_ir_state_t ir_last;
-/* No IR is sent until then (esp_timer us): the changes of Matter made for a message of the original remote
- * must not be sent back */
-#define IR_REMOTE_QUIET_US (2 * 1000 * 1000)
-static int64_t ir_quiet_until_us = 0;
-
-static bool app_driver_ir_state_equal(const app_ir_state_t &a, const app_ir_state_t &b)
-{
-    return a.power == b.power && a.mode == b.mode && a.setpoint == b.setpoint && a.fan == b.fan;
-}
-
-/* Build the IR state from OnOff, SystemMode, the setpoints and FanMode and send it when it changed. Sensor
- * reports re-evaluate the thermostat as well, they do not change the state, so nothing is sent for them.
- * force: send even if nothing changed (BOOT button). */
-static void app_driver_ir_update(bool power, Thermostat::SystemModeEnum mode, int16_t heating_setpoint,
-                                 int16_t cooling_setpoint, bool force)
-{
-    using Thermostat::SystemModeEnum;
-
-    app_ir_state_t state = {};
-    state.power = power && mode != SystemModeEnum::kOff;
-    state.fan = app_driver_get_fan();
-    switch (mode) {
-    case SystemModeEnum::kHeat:
-    case SystemModeEnum::kEmergencyHeat:
-        state.mode = APP_IR_MODE_HEAT;
-        state.setpoint = heating_setpoint;
-        break;
-    case SystemModeEnum::kCool:
-    case SystemModeEnum::kPrecooling:
-        state.mode = APP_IR_MODE_COOL;
-        state.setpoint = cooling_setpoint;
-        break;
-    case SystemModeEnum::kDry:
-        state.mode = APP_IR_MODE_DRY;
-        state.setpoint = cooling_setpoint;
-        break;
-    case SystemModeEnum::kFanOnly:
-        state.mode = APP_IR_MODE_FAN;
-        state.setpoint = cooling_setpoint;
-        break;
-    default: {
-        /* Auto (and Off, which only sends power off): the air conditioner has one target temperature, the
-         * middle of the heating/cooling range, rounded to 0.5 degC */
-        state.mode = APP_IR_MODE_AUTO;
-        int middle = (heating_setpoint + cooling_setpoint) / 2;
-        state.setpoint = (int16_t)((middle + 25) / 50 * 50);
-        break;
-    }
-    }
-
-#if !CONFIG_IR_AC_HALF_DEGREES
-    /* What is sent: whole degrees (the state is compared with what the receiver decodes) */
-    state.setpoint = (int16_t)((state.setpoint + 50) / 100 * 100);
-#endif
-
-    /* Nothing is sent on boot: the air conditioner keeps its own state over a reboot or an OTA update of the
-     * ESP32, sending it again would only make it beep. The first state is just remembered. */
-    if (!ir_have_last) {
-        ir_have_last = true;
-        ir_last = state;
-        APP_LOG("[IR]       boot state remembered, not sent");
-        return;
-    }
-    /* Matter follows a message of the original remote: the air conditioner already is in this state */
-    if (!force && esp_timer_get_time() < ir_quiet_until_us) {
-        ir_last = state;
-        return;
-    }
-    /* While the unit is off, a new mode, setpoint or fan speed is only sent with the next power on */
-    if (!force && (app_driver_ir_state_equal(state, ir_last) || (!state.power && !ir_last.power))) {
-        return;
-    }
-    ir_last = state;
-    app_ir_send(&state);
-}
-
 /* OnOff of the Room Air Conditioner (false if it cannot be read) */
 static bool app_driver_get_power()
 {
@@ -444,8 +364,56 @@ static bool app_driver_get_power()
     return val.val.b;
 }
 
-/* arg of app_driver_thermostat_update(): send the IR state even if nothing changed */
-#define APP_DRIVER_UPDATE_FORCE_IR 1
+/* Called by the IR TX task with the Matter stack locked: the whole state of the air conditioner from OnOff,
+ * SystemMode, the setpoints and FanMode, as it is sent over IR. */
+bool app_driver_ir_read_state(app_ir_state_t *state)
+{
+    using Thermostat::SystemModeEnum;
+    if (thermostat_endpoint_id == chip::kInvalidEndpointId) {
+        return false;
+    }
+    SystemModeEnum mode = static_cast<SystemModeEnum>(app_driver_get_system_mode());
+    int16_t heating_setpoint = app_driver_get_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id,
+                                                       THERMOSTAT_DEFAULT_HEAT_SETPOINT);
+    int16_t cooling_setpoint = app_driver_get_setpoint(Thermostat::Attributes::OccupiedCoolingSetpoint::Id,
+                                                       THERMOSTAT_DEFAULT_COOL_SETPOINT);
+    *state = {};
+    state->power = app_driver_get_power() && mode != SystemModeEnum::kOff;
+    state->fan = app_driver_get_fan();
+    switch (mode) {
+    case SystemModeEnum::kHeat:
+    case SystemModeEnum::kEmergencyHeat:
+        state->mode = APP_IR_MODE_HEAT;
+        state->setpoint = heating_setpoint;
+        break;
+    case SystemModeEnum::kCool:
+    case SystemModeEnum::kPrecooling:
+        state->mode = APP_IR_MODE_COOL;
+        state->setpoint = cooling_setpoint;
+        break;
+    case SystemModeEnum::kDry:
+        state->mode = APP_IR_MODE_DRY;
+        state->setpoint = cooling_setpoint;
+        break;
+    case SystemModeEnum::kFanOnly:
+        state->mode = APP_IR_MODE_FAN;
+        state->setpoint = cooling_setpoint;
+        break;
+    default: {
+        /* Auto (and Off, which only sends power off): the air conditioner has one target temperature, the
+         * middle of the heating/cooling range, rounded to 0.5 degC */
+        state->mode = APP_IR_MODE_AUTO;
+        int middle = (heating_setpoint + cooling_setpoint) / 2;
+        state->setpoint = (int16_t)((middle + 25) / 50 * 50);
+        break;
+    }
+    }
+#if !CONFIG_IR_AC_HALF_DEGREES
+    /* What is sent: whole degrees (the state is compared with what the receiver decodes) */
+    state->setpoint = (int16_t)((state->setpoint + 50) / 100 * 100);
+#endif
+    return true;
+}
 
 static void app_driver_thermostat_update(intptr_t arg)
 {
@@ -468,8 +436,7 @@ static void app_driver_thermostat_update(intptr_t arg)
               cooling_setpoint);
 
     ac_mode = system_mode;
-    app_driver_ir_update(power, static_cast<Thermostat::SystemModeEnum>(app_driver_get_system_mode()),
-                         heating_setpoint, cooling_setpoint, arg == APP_DRIVER_UPDATE_FORCE_IR);
+    /* Nothing IR related here: the IR TX task is notified by app_attribute_update_cb() and reads the state itself */
 
     char temperature[16] = "unknown";
     if (remote_temperature_valid) {
@@ -495,8 +462,6 @@ void app_driver_thermostat_schedule_update()
  * Original remote of the air conditioner: Matter follows it
  ******************************************************************************/
 
-static app_ir_state_t remote_state;
-
 static Thermostat::SystemModeEnum app_driver_remote_system_mode(app_ir_mode_t mode)
 {
     switch (mode) {
@@ -521,77 +486,50 @@ static int16_t app_driver_clamp(int16_t value, int16_t min, int16_t max)
     return value < min ? min : (value > max ? max : value);
 }
 
-/* On the Matter thread: write the state of the remote into OnOff, SystemMode, the setpoint(s) and FanMode */
-static void app_driver_remote_apply(intptr_t arg)
+/* Called by the IR RX task with the Matter stack locked: write the state of the original remote into OnOff,
+ * SystemMode, the setpoint(s) and FanMode. Only changed values are written. */
+void app_driver_ir_apply_remote(const app_ir_state_t *state)
 {
     if (thermostat_endpoint_id == chip::kInvalidEndpointId) {
         return;
     }
-    app_ir_state_t state = remote_state;
-    static const char *const fan_names[] = {"Auto", "Low", "Medium", "High"};
-    /* Our own message (an echo the receiver could not tell apart), or the remote sent what the unit already has:
-     * Matter already is in this state, writing it again would only disturb the controllers */
-    if (ir_have_last && app_driver_ir_state_equal(state, ir_last)) {
-        APP_LOG("[REMOTE]   same state as last sent, Matter not changed");
-        return;
-    }
-    APP_LOG("[REMOTE]   power %s, mode %s, %d C, fan %s -> Matter (no IR sent back)", state.power ? "ON" : "OFF",
-            app_system_mode_name(chip::to_underlying(app_driver_remote_system_mode(state.mode))), state.setpoint / 100,
-            fan_names[state.fan]);
-
-    /* The air conditioner is in this state now: the Matter changes below must not be sent back over IR */
-    ir_have_last = true;
-    ir_last = state;
-    ir_quiet_until_us = esp_timer_get_time() + IR_REMOTE_QUIET_US;
-
-    esp_matter_attr_val_t val = esp_matter_bool(state.power);
-    if (app_driver_get_power() != state.power) {
+    esp_matter_attr_val_t val = esp_matter_bool(state->power);
+    if (app_driver_get_power() != state->power) {
         app_driver_update_attribute(OnOff::Id, OnOff::Attributes::OnOff::Id, &val, "original remote");
     }
-    if (state.power) {
-        /* An "off" message of the remote carries nothing else */
-        Thermostat::SystemModeEnum mode = app_driver_remote_system_mode(state.mode);
-        if (app_driver_get_system_mode() != chip::to_underlying(mode)) {
-            val = esp_matter_enum8(chip::to_underlying(mode));
-            app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::SystemMode::Id, &val, "original remote");
-        }
-        /* Only a changed value is written */
-        if (state.mode == APP_IR_MODE_HEAT || state.mode == APP_IR_MODE_AUTO) {
-            int16_t setpoint = app_driver_clamp(state.setpoint, THERMOSTAT_ABS_MIN_HEAT_SETPOINT,
-                                                THERMOSTAT_ABS_MAX_HEAT_SETPOINT);
-            if (app_driver_get_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id, setpoint) != setpoint) {
-                val = esp_matter_int16(setpoint);
-                app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::OccupiedHeatingSetpoint::Id, &val,
-                                            "original remote");
-            }
-        }
-        if (state.mode != APP_IR_MODE_HEAT) {
-            int16_t setpoint = app_driver_clamp(state.setpoint, THERMOSTAT_ABS_MIN_COOL_SETPOINT,
-                                                THERMOSTAT_ABS_MAX_COOL_SETPOINT);
-            if (app_driver_get_setpoint(Thermostat::Attributes::OccupiedCoolingSetpoint::Id, setpoint) != setpoint) {
-                val = esp_matter_int16(setpoint);
-                app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::OccupiedCoolingSetpoint::Id, &val,
-                                            "original remote");
-            }
-        }
-        FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
-        if (fan) {
-            static const FanControl::FanModeEnum fan_modes[] = {FanControl::FanModeEnum::kAuto,
-                FanControl::FanModeEnum::kLow, FanControl::FanModeEnum::kMedium, FanControl::FanModeEnum::kHigh};
-            if (fan->GetFanMode() != fan_modes[state.fan]) {
-                fan->SetFanMode(fan_modes[state.fan]);
-            }
+    if (!state->power) {
+        return;     /* An "off" message of the remote carries nothing else */
+    }
+    Thermostat::SystemModeEnum mode = app_driver_remote_system_mode(state->mode);
+    if (app_driver_get_system_mode() != chip::to_underlying(mode)) {
+        val = esp_matter_enum8(chip::to_underlying(mode));
+        app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::SystemMode::Id, &val, "original remote");
+    }
+    if (state->mode == APP_IR_MODE_HEAT || state->mode == APP_IR_MODE_AUTO) {
+        int16_t setpoint = app_driver_clamp(state->setpoint, THERMOSTAT_ABS_MIN_HEAT_SETPOINT,
+                                            THERMOSTAT_ABS_MAX_HEAT_SETPOINT);
+        if (app_driver_get_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id, setpoint) != setpoint) {
+            val = esp_matter_int16(setpoint);
+            app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::OccupiedHeatingSetpoint::Id, &val,
+                                        "original remote");
         }
     }
-    app_driver_thermostat_update(0);
-}
-
-void app_driver_remote_state(const app_ir_state_t *state)
-{
-    /* Called from the IR RX task: the newest message wins if two arrive before the Matter thread gets to them */
-    remote_state = *state;
-    if (chip::DeviceLayer::PlatformMgr().ScheduleWork(app_driver_remote_apply, 0) != CHIP_NO_ERROR) {
-        ESP_LOGE(TAG, "Failed to schedule the remote state");
+    if (state->mode != APP_IR_MODE_HEAT) {
+        int16_t setpoint = app_driver_clamp(state->setpoint, THERMOSTAT_ABS_MIN_COOL_SETPOINT,
+                                            THERMOSTAT_ABS_MAX_COOL_SETPOINT);
+        if (app_driver_get_setpoint(Thermostat::Attributes::OccupiedCoolingSetpoint::Id, setpoint) != setpoint) {
+            val = esp_matter_int16(setpoint);
+            app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::OccupiedCoolingSetpoint::Id, &val,
+                                        "original remote");
+        }
+    }
+    FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
+    if (fan) {
+        static const FanControl::FanModeEnum fan_modes[] = {FanControl::FanModeEnum::kAuto,
+            FanControl::FanModeEnum::kLow, FanControl::FanModeEnum::kMedium, FanControl::FanModeEnum::kHigh};
+        if (fan->GetFanMode() != fan_modes[state->fan]) {
+            fan->SetFanMode(fan_modes[state->fan]);
+        }
     }
 }
 
@@ -619,8 +557,8 @@ public:
                 mode < 7 ? mode_names[mode] : "Unknown", state.percentCurrent,
                 state.percentSetting.IsNull() ? -1 : state.percentSetting.Value(), state.speedCurrent,
                 state.speedSetting.IsNull() ? -1 : state.speedSetting.Value(), thermostat_endpoint_id, mode);
-        /* FanMode is read from the server in the update, which sends the IR state when it changed */
-        app_driver_thermostat_schedule_update();
+        /* The IR TX task reads FanMode itself */
+        app_ir_notify(false);
     }
 };
 
@@ -1172,6 +1110,9 @@ static void app_driver_thermostat_start_work(intptr_t arg)
     app_driver_clamp_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id, THERMOSTAT_ABS_MIN_HEAT_SETPOINT,
                               THERMOSTAT_ABS_MAX_HEAT_SETPOINT);
 
+    /* The IR TX task remembers the state restored from NVS (nothing is sent on boot) */
+    app_ir_notify(false);
+
     /* Apply the power, mode and setpoints restored from NVS.
      * The subscriptions are started after kDnssdInitialized, when the binding table has been loaded. */
     app_driver_thermostat_update(0);
@@ -1219,20 +1160,14 @@ static void app_driver_button_long_press_cb(void *arg, void *data)
 static void app_driver_button_single_click_cb(void *arg, void *data)
 {
     APP_LOG("[IR]       BOOT button: send the state again");
-    if (chip::DeviceLayer::PlatformMgr().ScheduleWork(app_driver_thermostat_update, APP_DRIVER_UPDATE_FORCE_IR) !=
-            CHIP_NO_ERROR) {
-        ESP_LOGE(TAG, "Failed to schedule the IR update");
-    }
+    app_ir_notify(true);
 }
 
 /* Double press of the BOOT button: next model of the remote (kept in NVS), then send the state with it */
 static void app_driver_button_double_click_cb(void *arg, void *data)
 {
     app_ir_next_model();
-    if (chip::DeviceLayer::PlatformMgr().ScheduleWork(app_driver_thermostat_update, APP_DRIVER_UPDATE_FORCE_IR) !=
-            CHIP_NO_ERROR) {
-        ESP_LOGE(TAG, "Failed to schedule the IR update");
-    }
+    app_ir_notify(true);
 }
 
 app_driver_handle_t app_driver_thermostat_init()

@@ -327,6 +327,14 @@ menu "IR air conditioner"
             IRremoteESP8266 is compiled, to find the protocol of an unknown remote. It may not fit into the OTA
             partition next to Matter, disable it again when the protocol is known.
 
+    config IR_VERBOSE_LOGS
+        bool "Detailed IR logs (debugging)"
+        default n
+        help
+            Logs every sent message decoded back ("[IR TX]"), the RMT timings, the raw durations of unknown
+            messages, our own echo, the full description of received messages and the memory use. Long logs
+            take time on the console: keep it off in normal use.
+
     config IR_TX_INVERTED
         bool "Inverted IR output"
         default n

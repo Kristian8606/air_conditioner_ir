@@ -110,11 +110,18 @@ void app_driver_thermostat_schedule_update();
  */
 void app_driver_calibration_changed();
 
-/** A message of the original remote was received: Matter follows it (OnOff, SystemMode, setpoint, FanMode).
+/** The whole IR state of the air conditioner from the Matter attributes (OnOff, SystemMode, setpoints, FanMode).
  *
- * Nothing is sent back over IR. Safe to call from any task.
+ * Called by the IR TX task. The caller must hold the Matter stack lock (PlatformMgr().LockChipStack()).
+ * @return false before the endpoint exists
  */
-void app_driver_remote_state(const app_ir_state_t *state);
+bool app_driver_ir_read_state(app_ir_state_t *state);
+
+/** Write the state of the original remote into Matter (OnOff, SystemMode, setpoint, FanMode), changed values only.
+ *
+ * Called by the IR RX task. The caller must hold the Matter stack lock (PlatformMgr().LockChipStack()).
+ */
+void app_driver_ir_apply_remote(const app_ir_state_t *state);
 
 /** Delegate of the FanControl server (FanControl::Delegate), for cluster::fan_control::config_t::delegate */
 void *app_driver_fan_control_delegate();

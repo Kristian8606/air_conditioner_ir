@@ -7,11 +7,12 @@
 */
 
 #include <esp_log.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
 #include <freertos/semphr.h>
-#include <math.h>
 #include <freertos/task.h>
+#include <math.h>
 #include <nvs.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,8 +27,6 @@
 #include <IRrecv.h>
 #include <IRremoteESP8266.h>
 #include <IRutils.h>
-#include <esp_system.h>
-#include <esp_timer.h>
 #include <ir_rmt_rx.h>
 #include <ir_rmt_tx.h>
 
@@ -50,13 +49,73 @@ static const char *TAG = "app_ir";
 #define APP_IR_RX_DECODE_ALL false
 #endif
 
+#if CONFIG_IR_VERBOSE_LOGS
+#define APP_IR_VERBOSE true
+#else
+#define APP_IR_VERBOSE false
+#endif
+
+/* Both IR tasks run below the Matter task (CONFIG_CHIP_TASK_PRIORITY): the RMT keeps the IR timing in hardware,
+ * the tasks only queue, wait and decode, they must never hold up Matter (and OpenThread above it). */
+#define APP_IR_BELOW_MATTER_PRIORITY (CONFIG_CHIP_TASK_PRIORITY > 1 ? CONFIG_CHIP_TASK_PRIORITY - 1 : tskIDLE_PRIORITY)
+
 #define APP_IR_TASK_STACK_SIZE 6144
-#define APP_IR_TASK_PRIORITY 5
+#define APP_IR_TASK_PRIORITY APP_IR_BELOW_MATTER_PRIORITY
 /* Moving a slider writes several values in a row: only the last one is sent, after this pause */
 #define APP_IR_SETTLE_MS 500
 
-/* One entry: a newer state replaces the one which was not sent yet */
-static QueueHandle_t app_ir_queue = nullptr;
+/* Notification bits for the IR TX task (app_ir_notify) */
+#define APP_IR_NOTIFY_CHANGED 0x1
+#define APP_IR_NOTIFY_FORCE 0x2
+static TaskHandle_t app_ir_tx_task_handle = nullptr;
+
+/* The state the air conditioner is in as far as we know: the last one sent, or received from its own remote.
+ * Used by both IR tasks, guarded by app_ir_state_mutex. */
+static SemaphoreHandle_t app_ir_state_mutex = nullptr;
+static bool app_ir_have_last = false;
+static app_ir_state_t app_ir_last;
+/* No IR is sent until then (esp_timer us): the Matter changes made for a message of the original remote must not
+ * be sent back */
+#define APP_IR_REMOTE_QUIET_US (2 * 1000 * 1000)
+static int64_t app_ir_quiet_until_us = 0;
+/* Set with the first notification (after Matter has started): before that the attributes cannot be read */
+static volatile bool app_ir_matter_ready = false;
+
+static bool app_ir_state_equal(const app_ir_state_t &a, const app_ir_state_t &b)
+{
+    return a.power == b.power && a.mode == b.mode && a.setpoint == b.setpoint && a.fan == b.fan;
+}
+
+/* Read the state from Matter. The attributes belong to the Matter task: lock its stack while reading. */
+static bool app_ir_read_matter_state(app_ir_state_t *state)
+{
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    bool ok = app_driver_ir_read_state(state);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+    return ok;
+}
+
+/* Decide whether the state has to be sent and remember it.
+ * Nothing is sent on boot: the air conditioner keeps its own state over a reboot or an OTA update of the ESP32,
+ * sending it again would only make it beep. While the unit is off, a new mode, setpoint or fan speed is only sent
+ * with the next power on. */
+static bool app_ir_should_send(const app_ir_state_t &state, bool force)
+{
+    bool send = true;
+    xSemaphoreTake(app_ir_state_mutex, portMAX_DELAY);
+    if (!app_ir_have_last) {
+        APP_LOG("[IR]       boot state remembered, not sent");
+        send = false;
+    } else if (!force && esp_timer_get_time() < app_ir_quiet_until_us) {
+        send = false;   /* Matter follows a message of the original remote: the unit already is in this state */
+    } else if (!force && (app_ir_state_equal(state, app_ir_last) || (!state.power && !app_ir_last.power))) {
+        send = false;
+    }
+    app_ir_have_last = true;
+    app_ir_last = state;
+    xSemaphoreGive(app_ir_state_mutex);
+    return send;
+}
 
 /* Model of the remote: from menuconfig, or the one selected with a double click on BOOT (kept in NVS) */
 #define APP_IR_NVS_NAMESPACE "app_ir"
@@ -131,11 +190,18 @@ static void app_ir_task(void *arg)
     app_ir_state_t state;
 
     while (true) {
-        if (xQueueReceive(app_ir_queue, &state, portMAX_DELAY) != pdTRUE) {
+        uint32_t bits = 0;
+        if (xTaskNotifyWait(0, UINT32_MAX, &bits, portMAX_DELAY) != pdTRUE) {
             continue;
         }
-        while (xQueueReceive(app_ir_queue, &state, pdMS_TO_TICKS(APP_IR_SETTLE_MS)) == pdTRUE) {
-            /* A newer state arrived, wait until the values settle */
+        /* Moving a slider writes several values in a row: wait until they settle, then read the last state */
+        uint32_t more = 0;
+        while (xTaskNotifyWait(0, UINT32_MAX, &more, pdMS_TO_TICKS(APP_IR_SETTLE_MS)) == pdTRUE) {
+            bits |= more;
+        }
+        app_ir_matter_ready = true;
+        if (!app_ir_read_matter_state(&state) || !app_ir_should_send(state, bits & APP_IR_NOTIFY_FORCE)) {
+            continue;
         }
 
         stdAc::state_t next;
@@ -157,9 +223,11 @@ static void app_ir_task(void *arg)
         APP_LOG("[IR]       %s %s model %d, power %s, mode %s, %.1f C, fan %s (GPIO%d)", sent ? "sent" : "NOT sent",
                 CONFIG_IR_AC_PROTOCOL, (int)next.model, state.power ? "ON" : "OFF", mode_names[state.mode],
                 next.degrees, fan_names[state.fan], CONFIG_IR_TX_GPIO);
-        APP_LOG("[MEMORY]   heap free %u, lowest %u bytes, IR task stack left %u bytes",
-                (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
-                (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+        if (APP_IR_VERBOSE) {
+            APP_LOG("[MEMORY]   heap free %u, lowest %u bytes, IR task stack left %u bytes",
+                    (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
+                    (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+        }
     }
 }
 
@@ -168,7 +236,7 @@ static void app_ir_task(void *arg)
  ******************************************************************************/
 
 #define APP_IR_RX_TASK_STACK_SIZE 8192
-#define APP_IR_RX_TASK_PRIORITY 4
+#define APP_IR_RX_TASK_PRIORITY APP_IR_BELOW_MATTER_PRIORITY
 /* A space longer than this ends a message (kTimeoutMs of IRremoteESP8266) */
 #define APP_IR_RX_IDLE_US 15000
 #define APP_IR_RX_MAX_DURATIONS 2048
@@ -200,23 +268,30 @@ static bool app_ir_decode_log(IRrecv &irrecv, const char *prefix, const uint16_t
                               decode_results &results)
 {
     irrecv.loadRaw(usecs, count);
+    /* Without detailed logs: one line per message of the remote, nothing for our own echo */
+    bool log = APP_IR_VERBOSE || !own;
     if (!irrecv.decode(&results) || results.decode_type == decode_type_t::UNKNOWN) {
-        APP_LOG("%s    UNKNOWN protocol%s (decoders: %s, NEC%s)", prefix, own ? " (own transmission)" : "",
-                CONFIG_IR_AC_PROTOCOL, APP_IR_RX_DECODE_ALL ? ", all" : "");
-        if (!own) {
-            /* Our own message distorted by the receiver next to the LED is not worth the long log */
+        if (log) {
+            APP_LOG("%s    UNKNOWN protocol%s, %u durations (decoders: %s, NEC%s)", prefix,
+                    own ? " (own transmission)" : "", (unsigned)count, CONFIG_IR_AC_PROTOCOL,
+                    APP_IR_RX_DECODE_ALL ? ", all" : "");
+        }
+        if (APP_IR_VERBOSE && !own) {
             app_ir_rx_log_raw(usecs, count);
         }
         return false;
     }
 
-    APP_LOG("%s    %s, %u bits%s", prefix, typeToString(results.decode_type, results.repeat).c_str(), results.bits,
-            own ? " (own transmission)" : "");
-    APP_LOG("%s    data %s", prefix, resultToHexidecimal(&results).c_str());
+    if (log) {
+        APP_LOG("%s    %s, %u bits%s, data %s", prefix, typeToString(results.decode_type, results.repeat).c_str(),
+                results.bits, own ? " (own transmission)" : "", resultToHexidecimal(&results).c_str());
+    }
 #if DECODE_AC
-    String description = IRAcUtils::resultAcToString(&results);
-    if (description.length() > 0) {
-        APP_LOG("%s    %s", prefix, description.c_str());
+    if (APP_IR_VERBOSE) {
+        String description = IRAcUtils::resultAcToString(&results);
+        if (description.length() > 0) {
+            APP_LOG("%s    %s", prefix, description.c_str());
+        }
     }
 #endif  // DECODE_AC
     return true;
@@ -314,6 +389,34 @@ static void app_ir_tx_monitor(const uint32_t *symbols, size_t symbol_count)
     xSemaphoreGive(app_ir_tx_ready);
 }
 
+/* A message of the original remote: Matter follows it, nothing is sent back over IR */
+static void app_ir_apply_remote(const app_ir_state_t &state)
+{
+    static const char *const mode_names[] = {"Auto", "Cool", "Heat", "Dry", "Fan"};
+    static const char *const fan_names[] = {"Auto", "Low", "Medium", "High"};
+
+    xSemaphoreTake(app_ir_state_mutex, portMAX_DELAY);
+    bool same = app_ir_have_last && app_ir_state_equal(state, app_ir_last);
+    if (!same) {
+        /* The unit is in this state now: the Matter changes below come back as notifications, they must not be sent */
+        app_ir_have_last = true;
+        app_ir_last = state;
+        app_ir_quiet_until_us = esp_timer_get_time() + APP_IR_REMOTE_QUIET_US;
+    }
+    xSemaphoreGive(app_ir_state_mutex);
+    if (same) {
+        APP_LOG("[REMOTE]   same state as last sent, Matter not changed");
+        return;
+    }
+
+    APP_LOG("[REMOTE]   power %s, mode %s, %d C, fan %s -> Matter (no IR sent back)", state.power ? "ON" : "OFF",
+            mode_names[state.mode], state.setpoint / 100, fan_names[state.fan]);
+    /* The attributes belong to the Matter task: lock its stack while writing */
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    app_driver_ir_apply_remote(&state);
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+}
+
 static void app_ir_rx_task(void *arg)
 {
     static uint16_t usecs[APP_IR_RX_MAX_DURATIONS];
@@ -350,20 +453,23 @@ static void app_ir_rx_task(void *arg)
             continue;   /* Our own message (reflected or from the LED next to the receiver) is not a remote */
         }
         app_ir_state_t state;
-        if (app_ir_remote_state(results, &state)) {
-            app_driver_remote_state(&state);
+        if (app_ir_matter_ready && app_ir_remote_state(results, &state)) {
+            app_ir_apply_remote(state);
         }
-        APP_LOG("[MEMORY]   heap free %u, lowest %u bytes, IR RX task stack left %u bytes",
-                (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
-                (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+        if (APP_IR_VERBOSE) {
+            APP_LOG("[MEMORY]   heap free %u, lowest %u bytes, IR RX task stack left %u bytes",
+                    (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
+                    (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+        }
     }
 }
 
 void app_ir_init()
 {
-    app_ir_queue = xQueueCreate(1, sizeof(app_ir_state_t));
-    if (!app_ir_queue ||
-            xTaskCreate(app_ir_task, "ir", APP_IR_TASK_STACK_SIZE, nullptr, APP_IR_TASK_PRIORITY, nullptr) != pdPASS) {
+    app_ir_state_mutex = xSemaphoreCreateMutex();
+    if (!app_ir_state_mutex ||
+            xTaskCreate(app_ir_task, "ir", APP_IR_TASK_STACK_SIZE, nullptr, APP_IR_TASK_PRIORITY,
+                        &app_ir_tx_task_handle) != pdPASS) {
         ESP_LOGE(TAG, "Failed to start the IR task");
         return;
     }
@@ -375,7 +481,10 @@ void app_ir_init()
             pdPASS) {
         ESP_LOGE(TAG, "Failed to start the IR receiver task");
     } else {
-        ir_rmt_tx_set_monitor(app_ir_tx_monitor);
+        if (APP_IR_VERBOSE) {
+            /* [IR TX]: every sent message decoded back */
+            ir_rmt_tx_set_monitor(app_ir_tx_monitor);
+        }
     }
     if (!IRac::isProtocolSupported(decode_type_t::IR_AC_PROTOCOL_ENUM)) {
         ESP_LOGE(TAG, "Protocol %s is not compiled in", CONFIG_IR_AC_PROTOCOL);
@@ -386,10 +495,12 @@ void app_ir_init()
             (unsigned)esp_get_minimum_free_heap_size());
 }
 
-void app_ir_send(const app_ir_state_t *state)
+void app_ir_notify(bool force)
 {
-    if (app_ir_queue) {
-        xQueueOverwrite(app_ir_queue, state);
+    /* Only a notification: no IR work in the calling task (e.g. the Matter task) */
+    if (app_ir_tx_task_handle) {
+        xTaskNotify(app_ir_tx_task_handle, force ? APP_IR_NOTIFY_FORCE | APP_IR_NOTIFY_CHANGED : APP_IR_NOTIFY_CHANGED,
+                    eSetBits);
     }
 }
 

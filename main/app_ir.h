@@ -37,11 +37,13 @@ typedef struct {
 /** Start the IR task. The IR transmitter (menuconfig: IR air conditioner) is set up with the first message. */
 void app_ir_init();
 
-/** Send the state to the air conditioner (from the IR task, the call does not wait).
+/** Tell the IR TX task that power, mode, a setpoint or the fan changed in Matter (any task, does not wait).
  *
- * If several states are queued before the IR task gets to them, only the newest one is sent.
+ * This is all Matter does for IR: the IR TX task reads the attributes itself (with the Matter stack locked),
+ * builds the message and sends it when the state changed. Several notifications in a row are sent once.
+ * @param force send even if nothing changed (BOOT button)
  */
-void app_ir_send(const app_ir_state_t *state);
+void app_ir_notify(bool force);
 
 /** Select the next model of the remote (1 .. IR_AC_MODEL_MAX, then 1 again) and keep it in NVS.
  *

@@ -154,6 +154,7 @@ static esp_err_t app_attribute_update_cb(callback_type_t type, uint16_t endpoint
             APP_LOG("[MODE]     %s (EP%u SystemMode 0x0201/0x001C = %u)", app_system_mode_name(val->val.u8),
                     endpoint_id, val->val.u8);
             app_driver_thermostat_schedule_update();
+            app_ir_notify(false);   /* The IR TX task reads the attributes and sends itself */
         } else if (attribute_id == Thermostat::Attributes::OccupiedHeatingSetpoint::Id ||
                    attribute_id == Thermostat::Attributes::OccupiedCoolingSetpoint::Id) {
             bool heating = attribute_id == Thermostat::Attributes::OccupiedHeatingSetpoint::Id;
@@ -161,6 +162,7 @@ static esp_err_t app_attribute_update_cb(callback_type_t type, uint16_t endpoint
                     val->val.i16 / 100, abs(val->val.i16 % 100), endpoint_id,
                     heating ? "OccupiedHeatingSetpoint" : "OccupiedCoolingSetpoint", attribute_id, val->val.i16);
             app_driver_thermostat_schedule_update();
+            app_ir_notify(false);
         } else if (attribute_id == Thermostat::Attributes::LocalTemperatureCalibration::Id) {
             app_driver_calibration_changed();
         }
@@ -170,6 +172,7 @@ static esp_err_t app_attribute_update_cb(callback_type_t type, uint16_t endpoint
             attribute_id == OnOff::Attributes::OnOff::Id) {
         APP_LOG("[POWER]    %s (EP%u OnOff 0x0006/0x0000 = %u)", val->val.b ? "ON" : "OFF", endpoint_id, val->val.b);
         app_driver_thermostat_schedule_update();
+        app_ir_notify(false);
     }
 
     return ESP_OK;

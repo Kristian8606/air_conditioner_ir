@@ -30,14 +30,19 @@ conditioner does (log `[IR]`):
     Assistant show the change. Nothing is sent back over IR: the state is remembered as the state of the unit and
     no IR is sent for 2 s. Short commands (e.g. Fujitsu swing step) are ignored, "off" switches On/Off off.
     Messages right after our own transmission are not taken as the remote.
--   Every message we send is also decoded by the library and logged (`[IR TX]`: protocol, bytes, description),
+-   Tasks: Matter only notifies the IR TX task (`app_ir_notify()`, a task notification) when OnOff, SystemMode,
+    a setpoint or FanMode changed. The IR TX task reads the attributes itself with the Matter stack locked, builds
+    the message and sends it. The IR RX task decodes the receiver and writes the remote's state into Matter itself,
+    also with the stack locked. Both IR tasks run below the Matter task; Matter and OpenThread keep the priorities
+    of the thermostat (1 and 5). Long IR logs are off by default, `IR_VERBOSE_LOGS` (menu `IR air conditioner`).
+-   With `IR_VERBOSE_LOGS`, every message we send is also decoded by the library and logged (`[IR TX]`: protocol, bytes, description),
     to check the bytes without a receiver.
--   IR receiver (TSOP38238, VS1838B, ... 38 kHz module: VCC 3.3 V, GND, OUT to GPIO 5): every received message
-    is decoded and logged (`[IR RX]`): protocol, bits, the bytes, the air conditioner description and the model.
-    The receiver decodes the selected protocol and NEC; `IR_RX_DECODE_ALL` compiles every decoder of the library
-    to find the protocol of an unknown remote (much more flash). An unknown message is logged as raw durations.
-    Messages right after an own transmission are marked "(own transmission)": with the receiver next to the IR
-    LED this checks the transmitter.
+-   IR receiver (TSOP38238, VS1838B, ... 38 kHz module: VCC 3.3 V, GND, OUT to GPIO 5, internal pull-up): every
+    received message is decoded and logged in one line (`[IR RX]`: protocol, bits, bytes). The decoder tolerance
+    is 40 % (receiver modules shorten the marks). It decodes the selected protocol and NEC; `IR_RX_DECODE_ALL`
+    compiles every decoder of the library to find the protocol of an unknown remote (much more flash). Our own
+    echo (until 0.5 s after a transmission) is not taken as the remote. With `IR_VERBOSE_LOGS` also the
+    description of the message, the raw durations of unknown messages and the own echo are logged.
 -   A double press of the BOOT button selects the next model of the remote (1 .. `IR_AC_MODEL_MAX`, Fujitsu: 1
     ARRAH2E, 2 ARDB1, 3 ARREB1E, 4 ARJW2, 5 ARRY4, 6 ARREW4E, then 1 again), keeps it in NVS and sends the
     current state with it. To find the model without rebuilding: switch the unit on in the app (e.g. Cool), then
