@@ -11,6 +11,7 @@
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_matter.h>
+#include <app_ir.h>
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include "esp_openthread_types.h"
@@ -108,6 +109,12 @@ void app_driver_thermostat_schedule_update();
  * It is scheduled on the Matter thread, so it is safe to call from any task.
  */
 void app_driver_calibration_changed();
+
+/** A message of the original remote was received: Matter follows it (OnOff, SystemMode, setpoint, FanMode).
+ *
+ * Nothing is sent back over IR. Safe to call from any task.
+ */
+void app_driver_remote_state(const app_ir_state_t *state);
 
 /** Delegate of the FanControl server (FanControl::Delegate), for cluster::fan_control::config_t::delegate */
 void *app_driver_fan_control_delegate();

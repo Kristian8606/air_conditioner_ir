@@ -4,8 +4,7 @@ A Matter Room Air Conditioner for an existing split air conditioner. The ESP32-C
 IR transmitter (like its original remote) and follows changes from the original remote with an IR receiver.
 A bound remote Matter sensor provides the room temperature, humidity and battery.
 
-Work in progress, see [ROADMAP.md](ROADMAP.md). The IR receiver decodes and logs what it receives, it does
-not update Matter yet.
+Work in progress, see [ROADMAP.md](ROADMAP.md).
 
 ## IR control
 
@@ -26,6 +25,11 @@ conditioner does (log `[IR]`):
 -   Nothing is sent on boot (reboot, OTA update): the air conditioner keeps its own state.
 -   A short press of the BOOT button sends the current state again (e.g. when the air conditioner did not
     receive it).
+-   The original remote: a complete state message of the selected protocol received by the IR receiver updates
+    Matter (On/Off, SystemMode, the setpoint of the mode, FanMode; log `[REMOTE]`), so Apple Home and Home
+    Assistant show the change. Nothing is sent back over IR: the state is remembered as the state of the unit and
+    no IR is sent for 2 s. Short commands (e.g. Fujitsu swing step) are ignored, "off" switches On/Off off.
+    Messages right after our own transmission are not taken as the remote.
 -   Every message we send is also decoded by the library and logged (`[IR TX]`: protocol, bytes, description),
     to check the bytes without a receiver.
 -   IR receiver (TSOP38238, VS1838B, ... 38 kHz module: VCC 3.3 V, GND, OUT to GPIO 5): every received message

@@ -186,16 +186,17 @@ static void app_ir_rx_log_raw(const uint16_t *usecs, size_t count)
     }
 }
 
-/* Decode a message (from the receiver or our own transmitter) and log it with the prefix ("[IR RX]"/"[IR TX]") */
-static void app_ir_decode_log(IRrecv &irrecv, const char *prefix, const uint16_t *usecs, size_t count, bool own)
+/* Decode a message (from the receiver or our own transmitter) and log it with the prefix ("[IR RX]"/"[IR TX]").
+ * @return true if it was decoded (results) */
+static bool app_ir_decode_log(IRrecv &irrecv, const char *prefix, const uint16_t *usecs, size_t count, bool own,
+                              decode_results &results)
 {
-    decode_results results;
     irrecv.loadRaw(usecs, count);
     if (!irrecv.decode(&results) || results.decode_type == decode_type_t::UNKNOWN) {
         APP_LOG("%s    UNKNOWN protocol%s (decoders: %s, NEC%s)", prefix, own ? " (own transmission)" : "",
                 CONFIG_IR_AC_PROTOCOL, APP_IR_RX_DECODE_ALL ? ", all" : "");
         app_ir_rx_log_raw(usecs, count);
-        return;
+        return false;
     }
 
     APP_LOG("%s    %s, %u bits%s", prefix, typeToString(results.decode_type, results.repeat).c_str(), results.bits,
@@ -207,6 +208,68 @@ static void app_ir_decode_log(IRrecv &irrecv, const char *prefix, const uint16_t
         APP_LOG("%s    %s", prefix, description.c_str());
     }
 #endif  // DECODE_AC
+    return true;
+}
+
+/* A message of the original remote: the state for Matter. false if it is not a complete state of the selected
+ * protocol (e.g. a short "swing step" command). */
+static bool app_ir_remote_state(const decode_results &results, app_ir_state_t *state)
+{
+    if (results.decode_type != decode_type_t::IR_AC_PROTOCOL_ENUM) {
+        return false;
+    }
+    stdAc::state_t ac;
+    if (!IRAcUtils::decodeToState(&results, &ac)) {
+        return false;
+    }
+#if SEND_FUJITSU_AC
+    /* Fujitsu: the short messages are single commands (off, swing step, ...). Only "off" is a state. */
+    if (results.decode_type == decode_type_t::FUJITSU_AC && results.bits < kFujitsuAcBits - 8 && ac.power) {
+        return false;
+    }
+#endif
+    state->power = ac.power;
+    switch (ac.mode) {
+    case stdAc::opmode_t::kHeat:
+        state->mode = APP_IR_MODE_HEAT;
+        break;
+    case stdAc::opmode_t::kDry:
+        state->mode = APP_IR_MODE_DRY;
+        break;
+    case stdAc::opmode_t::kFan:
+        state->mode = APP_IR_MODE_FAN;
+        break;
+    case stdAc::opmode_t::kAuto:
+        state->mode = APP_IR_MODE_AUTO;
+        break;
+    case stdAc::opmode_t::kCool:
+    default:
+        state->mode = APP_IR_MODE_COOL;
+        break;
+    }
+    float celsius = ac.celsius ? ac.degrees : (ac.degrees - 32.0f) * 5.0f / 9.0f;
+    state->setpoint = (int16_t)lroundf(celsius * 100.0f);
+    switch (ac.fanspeed) {
+    case stdAc::fanspeed_t::kMin:
+    case stdAc::fanspeed_t::kLow:
+        state->fan = APP_IR_FAN_LOW;
+        break;
+    case stdAc::fanspeed_t::kMedium:
+    case stdAc::fanspeed_t::kMediumHigh:
+        state->fan = APP_IR_FAN_MEDIUM;
+        break;
+    case stdAc::fanspeed_t::kHigh:
+    case stdAc::fanspeed_t::kMax:
+        state->fan = APP_IR_FAN_HIGH;
+        break;
+    default:
+        state->fan = APP_IR_FAN_AUTO;
+        break;
+    }
+    if (ac.quiet) {
+        state->fan = APP_IR_FAN_LOW;
+    }
+    return true;
 }
 
 /* Our own messages, converted to durations by the TX monitor (IR task) for the decoder (IR RX task) */
@@ -256,7 +319,8 @@ static void app_ir_rx_task(void *arg)
     while (true) {
         /* What we send: decoded from the transmitted durations, so the bytes can be checked without a receiver */
         if (xSemaphoreTake(app_ir_tx_ready, receiver ? 0 : portMAX_DELAY) == pdTRUE) {
-            app_ir_decode_log(irrecv, "[IR TX]", app_ir_tx_usecs, app_ir_tx_count, false);
+            decode_results results;
+            app_ir_decode_log(irrecv, "[IR TX]", app_ir_tx_usecs, app_ir_tx_count, false, results);
             app_ir_tx_count = 0;
         }
         if (!receiver) {
@@ -269,7 +333,14 @@ static void app_ir_rx_task(void *arg)
         }
         int64_t last_tx = ir_rmt_tx_last_end_us();
         bool own = last_tx != 0 && esp_timer_get_time() - last_tx < APP_IR_RX_OWN_US;
-        app_ir_decode_log(irrecv, "[IR RX]", usecs, count, own);
+        decode_results results;
+        if (!app_ir_decode_log(irrecv, "[IR RX]", usecs, count, own, results) || own) {
+            continue;   /* Our own message (reflected or from the LED next to the receiver) is not a remote */
+        }
+        app_ir_state_t state;
+        if (app_ir_remote_state(results, &state)) {
+            app_driver_remote_state(&state);
+        }
     }
 }
 
