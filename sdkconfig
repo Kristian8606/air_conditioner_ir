@@ -4559,8 +4559,7 @@ CONFIG_CHIP_ENABLE_PAIRING_AUTOSTART=y
 #
 # General Options
 #
-# default:
-CONFIG_CHIP_PROJECT_CONFIG=""
+CONFIG_CHIP_PROJECT_CONFIG="main/matter_project_config.h"
 # default:
 CONFIG_CHIP_TASK_STACK_SIZE=8192
 # default:

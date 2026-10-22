@@ -56,3 +56,6 @@ CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y
 
 # Air conditioner: own product ID (test DAC exists for 0xFFF1/0x8001)
 CONFIG_DEVICE_PRODUCT_ID=0x8001
+
+# CHIP project configuration (CASE client pool, see main/matter_project_config.h)
+CONFIG_CHIP_PROJECT_CONFIG="main/matter_project_config.h"

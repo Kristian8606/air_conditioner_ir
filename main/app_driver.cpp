@@ -1045,8 +1045,9 @@ void app_driver_bindings_loaded()
 {
     /* esp-matter loads the binding table on kDnssdInitialized, in work scheduled from its own event handler.
      * The event handlers are called in the reverse order of their registration, so the application handler runs
-     * first and work scheduled from it would still see an empty binding table. Subscribe a moment later. */
-    if (chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(1000),
+     * first and work scheduled from it would still see an empty binding table. Subscribe a moment later: 5 s, so
+     * the subscriptions of the controllers, which are resumed on boot, get their CASE sessions first. */
+    if (chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Milliseconds32(5000),
                                                     app_driver_bindings_loaded_timer_cb, nullptr) != CHIP_NO_ERROR) {
         ESP_LOGE(TAG, "Failed to start the binding table timer");
     }
