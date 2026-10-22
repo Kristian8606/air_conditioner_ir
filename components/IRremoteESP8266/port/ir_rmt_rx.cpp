@@ -16,8 +16,8 @@ static const char *TAG = "ir_rmt_rx";
 #define IR_RMT_RX_RESOLUTION_HZ 1000000
 /* Shorter pulses are noise. The filter counts in the group clock (max 255 ticks), 1 us is safe for all of them */
 #define IR_RMT_RX_GLITCH_NS 1000
-/* Longest air conditioner message (e.g. Daikin 312 bits with several frames): 1024 symbols = 2048 durations */
-#define IR_RMT_RX_FRAME_SYMBOLS 1024
+/* Longest message kept: 512 symbols = 1024 durations (Fujitsu: 130 symbols). RAM is short next to Matter. */
+#define IR_RMT_RX_FRAME_SYMBOLS 512
 /* Ping-pong: the driver fills this buffer and calls the callback for every part */
 #define IR_RMT_RX_CHUNK_SYMBOLS 64
 

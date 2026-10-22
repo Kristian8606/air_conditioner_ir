@@ -26,6 +26,7 @@
 #include <IRrecv.h>
 #include <IRremoteESP8266.h>
 #include <IRutils.h>
+#include <esp_system.h>
 #include <esp_timer.h>
 #include <ir_rmt_rx.h>
 #include <ir_rmt_tx.h>
@@ -49,8 +50,10 @@ static const char *TAG = "app_ir";
 #define APP_IR_RX_DECODE_ALL false
 #endif
 
-#define APP_IR_TASK_STACK_SIZE 6144
-#define APP_IR_TASK_PRIORITY 5
+#define APP_IR_TASK_STACK_SIZE 4096
+/* Same priority as the Matter task (CONFIG_CHIP_TASK_PRIORITY 1): the RMT keeps the IR timing, the IR tasks must
+ * not hold up Matter (subscriptions and sessions of the controllers) */
+#define APP_IR_TASK_PRIORITY 1
 /* Moving a slider writes several values in a row: only the last one is sent, after this pause */
 #define APP_IR_SETTLE_MS 500
 
@@ -156,6 +159,9 @@ static void app_ir_task(void *arg)
         APP_LOG("[IR]       %s %s model %d, power %s, mode %s, %.1f C, fan %s (GPIO%d)", sent ? "sent" : "NOT sent",
                 CONFIG_IR_AC_PROTOCOL, (int)next.model, state.power ? "ON" : "OFF", mode_names[state.mode],
                 next.degrees, fan_names[state.fan], CONFIG_IR_TX_GPIO);
+        APP_LOG("[MEMORY]   heap free %u, lowest %u bytes, IR task stack left %u bytes",
+                (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
+                (unsigned)uxTaskGetStackHighWaterMark(nullptr));
     }
 }
 
@@ -163,11 +169,12 @@ static void app_ir_task(void *arg)
  * IR receiver: decode and log what the original remote (or this device) sends
  ******************************************************************************/
 
-#define APP_IR_RX_TASK_STACK_SIZE 8192
-#define APP_IR_RX_TASK_PRIORITY 4
+#define APP_IR_RX_TASK_STACK_SIZE 5120
+#define APP_IR_RX_TASK_PRIORITY 1
 /* A space longer than this ends a message (kTimeoutMs of IRremoteESP8266) */
 #define APP_IR_RX_IDLE_US 15000
-#define APP_IR_RX_MAX_DURATIONS 2048
+/* Fujitsu: 259 durations. RAM is short next to Matter and Thread, keep the buffers small */
+#define APP_IR_RX_MAX_DURATIONS 1024
 /* Fewer durations are noise (e.g. a light switched on) */
 #define APP_IR_RX_MIN_DURATIONS 6
 /* A message ending this soon after our own transmission is probably our own one */
@@ -195,7 +202,10 @@ static bool app_ir_decode_log(IRrecv &irrecv, const char *prefix, const uint16_t
     if (!irrecv.decode(&results) || results.decode_type == decode_type_t::UNKNOWN) {
         APP_LOG("%s    UNKNOWN protocol%s (decoders: %s, NEC%s)", prefix, own ? " (own transmission)" : "",
                 CONFIG_IR_AC_PROTOCOL, APP_IR_RX_DECODE_ALL ? ", all" : "");
-        app_ir_rx_log_raw(usecs, count);
+        if (!own) {
+            /* Our own message distorted by the receiver next to the LED is not worth the long log */
+            app_ir_rx_log_raw(usecs, count);
+        }
         return false;
     }
 
@@ -341,6 +351,9 @@ static void app_ir_rx_task(void *arg)
         if (app_ir_remote_state(results, &state)) {
             app_driver_remote_state(&state);
         }
+        APP_LOG("[MEMORY]   heap free %u, lowest %u bytes, IR RX task stack left %u bytes",
+                (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
+                (unsigned)uxTaskGetStackHighWaterMark(nullptr));
     }
 }
 
@@ -367,6 +380,8 @@ void app_ir_init()
     }
     ESP_LOGI(TAG, "IR air conditioner: %s, model %d, transmitter GPIO%d", CONFIG_IR_AC_PROTOCOL, (int)app_ir_model,
              CONFIG_IR_TX_GPIO);
+    APP_LOG("[MEMORY]   heap free %u, lowest %u bytes (IR started)", (unsigned)esp_get_free_heap_size(),
+            (unsigned)esp_get_minimum_free_heap_size());
 }
 
 void app_ir_send(const app_ir_state_t *state)
