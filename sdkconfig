@@ -5318,6 +5318,8 @@ CONFIG_IR_AC_MODEL=1
 # default:
 # CONFIG_IR_AC_HALF_DEGREES is not set
 # default:
+# CONFIG_IR_AC_SWING_HORIZONTAL is not set
+# default:
 CONFIG_IR_AC_MODEL_MAX=6
 # default:
 CONFIG_IR_TX_GPIO=4

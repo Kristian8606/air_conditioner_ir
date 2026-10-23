@@ -294,6 +294,15 @@ menu "IR air conditioner"
             ARDB1, ARREB1E: a half degree makes the message invalid for the unit), so by default the setpoint is
             rounded to a whole degree. Enable it only for remotes with half degrees (e.g. Fujitsu ARREW4E).
 
+    config IR_AC_SWING_HORIZONTAL
+        bool "Horizontal swing (left/right louvers)"
+        default n
+        help
+            The unit has motorized left/right louvers. Off: any swing from Matter (Swing in Apple Home, which
+            writes RockLeftRight, oscillation in Home Assistant) is sent as the up/down swing; a unit without
+            left/right louvers ignores a message with the horizontal swing. On: RockUpDown and RockLeftRight
+            are sent as they are.
+
     config IR_AC_MODEL_MAX
         int "Number of models (double click on BOOT)"
         default 6 if IR_AC_PROTOCOL_FUJITSU_AC

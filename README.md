@@ -17,8 +17,8 @@ conditioner does (log `[IR]`):
 | Power     | On/Off on and SystemMode not Off                                                    |
 | Mode      | SystemMode: Heat, Cool, Auto (Dry and FanOnly if a controller sets them)            |
 | Setpoint  | Heat: heating setpoint, Cool/Dry/Fan: cooling setpoint, Auto: middle of the two. Whole degrees: a controller writing 22.5 gets 23 in Matter too, so Apple Home and Home Assistant show what the unit gets (`IR_AC_HALF_DEGREES` for remotes with 0.5 °C) |
-| Fan       | FanMode Low/Medium/High/Auto. Off goes to Auto at once: a running unit always runs its fan |
-| Swing     | Fan Control RockSetting: up/down and left/right louvers (log `[SWING]`), not kept over a reboot |
+| Fan       | FanMode Low/Medium/High; Off (0 %) is the automatic fan of the unit (a running unit always runs its fan). There is no Auto FanMode: with it Apple Home greys out the speed slider |
+| Swing     | Fan Control RockSetting (Swing in Apple Home, oscillation in Home Assistant): any swing is the up/down swing; separate left/right only with `IR_AC_SWING_HORIZONTAL` (log `[SWING]`), not kept over a reboot. HomeKit has no louver position, only swing on/off |
 
 -   Only a change is sent: the sensor reports do not send anything. While the unit is off, changes of the mode,
     setpoint or fan are sent with the next power on.
@@ -65,7 +65,7 @@ Endpoint 1 is a Room Air Conditioner (0x0072) device:
 |---------------------------------------|-----------------|-------------------------------------------------------------------|
 | On/Off                                | Server          | Power of the unit (DeadFrontBehavior)                             |
 | Thermostat                            | Server          | SystemMode (Off/Heat/Cool/Auto), heating and cooling setpoints    |
-| Fan Control                           | Server          | FanMode Off/Low/Medium/High/Auto, 3 speeds, PercentSetting        |
+| Fan Control                           | Server          | FanMode Off (= auto of the unit)/Low/Medium/High, 3 speeds        |
 | Thermostat User Interface Configuration | Server        | Temperature display unit                                          |
 | Relative Humidity Measurement         | Server + Client | Client: bound to the sensor. Server: humidity of the room         |
 | Temperature Measurement               | Client          | Bound to the remote temperature sensor                            |
@@ -171,8 +171,8 @@ Progress). Without a bound temperature sensor `[SENSOR] no temperature sensor bo
 1.  On the device page bind TemperatureMeasurement (0x0402) to the temperature endpoint of the sensor and
     RelativeHumidityMeasurement (0x0405) to its humidity endpoint.
 2.  Home Assistant writes the binding table and adds the ACL entry on the sensor ("ACL present").
-3.  The battery is never null: 100 % until the first report, then the last reported value (kept in NVS, also
-    while the sensor is not reporting). Apple Home reads it as Battery Level and showed the whole accessory as
+3.  The battery is never null: 0 % while no sensor is bound, then the last reported value of the bound sensor
+    (kept in NVS, also while the sensor is not reporting). Apple Home reads it as Battery Level and showed the whole accessory as
     "No Response" when it was null.
 4.  The battery needs no binding: PowerSource 0x002F is read from the node of the bound temperature sensor
     with a wildcard endpoint.

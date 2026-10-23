@@ -199,6 +199,26 @@
     рестарт), както батерията. Auto спира да ги ползва, когато сензорът
     замлъкне. CASE клиенти 4 (v0.7.2) остават и важат и с новия SDK.
   - Същите поправки и в thermostat_remote_sensor (v2.4.0).
+- v0.12.1: вентилаторът без Auto режим в Matter (FanModeSequence
+  OffLowMedHigh): в Auto PercentSetting е null и Apple Home показва
+  плъзгача сив. Off (0 %) е автоматичният вентилатор на климатика (по IR
+  се праща Auto), 1-33 % Low, 34-66 % Medium, 67-100 % High. Off → Auto
+  от v0.12.0 е махнато. Съхранен FanMode Auto от по-стара версия става Off
+  (FanControl сървърът го отхвърля при стартиране).
+  - Щори: Apple Home включва Swing с RockSetting = 1 (RockLeftRight),
+    климатикът няма ляво/дясно и не реагираше (бипкаше само при
+    изключване). Сега всяко люлеене е горе/долу; отделно ляво/дясно само с
+    IR_AC_SWING_HORIZONTAL. HomeKit няма позиция на щорите, само Swing
+    вкл./изкл. (Matter AirflowDirection е посока на въздуха напред/назад).
+  - Apple Home (Heater Cooler) показва: Active, режим Auto/Heat/Cool,
+    текуща и зададени температури, скорост, Swing, единици, батерия.
+    Не показва влажността (няма я в Heater Cooler) и Lock Physical
+    Controls.
+- v0.13.0: отделен Humidity Sensor endpoint за влажността в Apple Home е
+  пробван и махнат: Apple го показва като отделна плочка. Heater Cooler
+  няма влажност, в Apple Home тя не се вижда (HA я показва).
+  - Батерия: 0 % без вързан сензор (беше 100 % до първия доклад), после
+    стойността от сензора. Същото в thermostat_remote_sensor.
   - esp-matter и Matter SDK остават винаги най-новите (и тестови).
 
 ## Остава

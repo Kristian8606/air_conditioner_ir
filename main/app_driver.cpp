@@ -40,6 +40,13 @@ using chip::app::ReadClient;
 
 static const char *TAG = "app_driver";
 
+/* A bool option which is off is not defined at all in sdkconfig.h */
+#if CONFIG_IR_AC_SWING_HORIZONTAL
+#define APP_SWING_HORIZONTAL true
+#else
+#define APP_SWING_HORIZONTAL false
+#endif
+
 /* attribute::update() with a trace log of the value and the reason (Trace attribute writes in menuconfig) */
 static esp_err_t app_driver_update_attribute(uint32_t cluster_id, uint32_t attribute_id, esp_matter_attr_val_t *val,
                                              const char *reason);
@@ -371,7 +378,7 @@ static app_ir_fan_t app_driver_get_fan()
         return APP_IR_FAN_MEDIUM;
     case FanControl::FanModeEnum::kHigh:
         return APP_IR_FAN_HIGH;
-    default:                                /* Auto, On, Smart; Off only until app_driver_fan_off_to_auto() */
+    default:                                /* Off (0 %): the automatic fan of the unit */
         return APP_IR_FAN_AUTO;
     }
 }
@@ -389,7 +396,7 @@ static bool app_driver_get_power()
 /* PercentCurrent and SpeedCurrent are the speed the fan runs at. The FanControl server leaves them to the application
  * (it only sets them to 0 for FanMode Off), so without this they stayed 0 while PercentSetting changed, and Apple Home
  * saw a fan which never followed its setting. The unit gives no feedback over IR: the fan runs at its setting while the
- * unit is on, Auto is shown as the middle speed. Call it on the Matter thread. */
+ * unit is on; Off (the automatic fan of the unit) and a unit which is off show 0. Call it on the Matter thread. */
 static void app_driver_update_fan_current(bool running)
 {
     FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
@@ -398,17 +405,11 @@ static void app_driver_update_fan_current(bool running)
     }
     chip::Percent percent = 0;
     uint8_t speed = 0;
-    if (running) {
-        auto percent_setting = fan->GetPercentSetting();
+    auto percent_setting = fan->GetPercentSetting();
+    if (running && !percent_setting.IsNull()) {
         auto speed_setting = fan->GetSpeedSetting();
-        uint8_t speed_max = fan->GetSpeedMax();
-        if (fan->GetFanMode() == FanControl::FanModeEnum::kAuto || percent_setting.IsNull()) {
-            percent = 66;
-            speed = speed_max > 1 ? (uint8_t)((speed_max + 1) / 2) : speed_max;
-        } else {
-            percent = percent_setting.Value();
-            speed = speed_setting.IsNull() ? (uint8_t)((speed_max * percent + 99) / 100) : speed_setting.Value();
-        }
+        percent = percent_setting.Value();
+        speed = speed_setting.IsNull() ? (uint8_t)((fan->GetSpeedMax() * percent + 99) / 100) : speed_setting.Value();
     }
     fan->SetPercentCurrent(percent);
     fan->SetSpeedCurrent(speed);
@@ -432,9 +433,15 @@ bool app_driver_ir_read_state(app_ir_state_t *state)
     state->fan = app_driver_get_fan();
     FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
     if (fan) {
-        /* RockSetting of Fan Control: the louvers. RockRound (both directions) is not offered. */
-        state->swing_v = fan->GetRockSetting().Has(FanControl::RockBitmap::kRockUpDown);
-        state->swing_h = fan->GetRockSetting().Has(FanControl::RockBitmap::kRockLeftRight);
+        /* RockSetting of Fan Control: the louvers. Apple Home switches its Swing on with RockLeftRight: without
+         * horizontal louvers any swing is the up/down swing. */
+        chip::BitMask<FanControl::RockBitmap> rock = fan->GetRockSetting();
+        if (APP_SWING_HORIZONTAL) {
+            state->swing_v = rock.Has(FanControl::RockBitmap::kRockUpDown);
+            state->swing_h = rock.Has(FanControl::RockBitmap::kRockLeftRight);
+        } else {
+            state->swing_v = rock.Raw() != 0;
+        }
     }
     switch (mode) {
     case SystemModeEnum::kHeat:
@@ -579,15 +586,19 @@ void app_driver_ir_apply_remote(const app_ir_state_t *state)
     }
     FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
     if (fan) {
-        static const FanControl::FanModeEnum fan_modes[] = {FanControl::FanModeEnum::kAuto,
+        /* The automatic fan of the unit is FanMode Off (0 %) */
+        static const FanControl::FanModeEnum fan_modes[] = {FanControl::FanModeEnum::kOff,
             FanControl::FanModeEnum::kLow, FanControl::FanModeEnum::kMedium, FanControl::FanModeEnum::kHigh};
         if (fan->GetFanMode() != fan_modes[state->fan]) {
             fan->SetFanMode(fan_modes[state->fan]);
         }
         chip::BitMask<FanControl::RockBitmap> rock;
         rock.Set(FanControl::RockBitmap::kRockUpDown, state->swing_v);
-        rock.Set(FanControl::RockBitmap::kRockLeftRight, state->swing_h);
-        if (fan->GetRockSetting().Raw() != rock.Raw()) {
+        rock.Set(FanControl::RockBitmap::kRockLeftRight, APP_SWING_HORIZONTAL && state->swing_h);
+        /* Without horizontal louvers only on/off matters: Apple Home may have switched the swing on with RockLeftRight */
+        bool changed = APP_SWING_HORIZONTAL ? fan->GetRockSetting().Raw() != rock.Raw()
+                                            : (fan->GetRockSetting().Raw() != 0) != state->swing_v;
+        if (changed) {
             fan->SetRockSetting(rock);
         }
     }
@@ -600,18 +611,6 @@ void app_driver_ir_apply_remote(const app_ir_state_t *state)
 /* FanControl is a code-driven cluster: its attributes are not in the esp-matter attribute storage and a write
  * does not call app_attribute_update_cb(). The FanControl server keeps the values (FanMode also in NVS) and tells
  * the application through this delegate. */
-/* A running air conditioner always runs its fan: FanMode Off (e.g. the fan entity of Home Assistant switched off, or
- * PercentSetting 0) goes to Auto, so the controllers show what the unit does. Scheduled from the delegate: the
- * FanControl server ignores a new FanMode while it is still notifying the delegate. */
-static void app_driver_fan_off_to_auto(intptr_t arg)
-{
-    FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
-    if (fan && fan->GetFanMode() == FanControl::FanModeEnum::kOff) {
-        APP_LOG("[FAN]      Off is not possible on the air conditioner, Auto");
-        fan->SetFanMode(FanControl::FanModeEnum::kAuto);
-    }
-}
-
 class AppFanControlDelegate : public FanControl::Delegate {
 public:
     chip::Protocols::InteractionModel::Status HandleStep(FanControl::StepDirectionEnum direction, bool wrap,
@@ -623,7 +622,7 @@ public:
 
     void OnFanDriveStateChanged(const FanControl::FanDriveState &state) override
     {
-        static const char *const mode_names[] = {"Off", "Low", "Medium", "High", "On", "Auto", "Smart"};
+        static const char *const mode_names[] = {"Off (auto of the unit)", "Low", "Medium", "High", "On", "Auto", "Smart"};
         uint8_t mode = chip::to_underlying(state.mode);
         APP_LOG("[FAN]      %s, percent %d (setting %d), speed %d (setting %d) (EP%u FanMode 0x0202/0x0000 = %u)",
                 mode < 7 ? mode_names[mode] : "Unknown", state.percentCurrent,
@@ -634,13 +633,6 @@ public:
         if (thermostat_endpoint_id == chip::kInvalidEndpointId) {
             return;
         }
-        if (state.mode == FanControl::FanModeEnum::kOff) {
-            /* Auto follows at once and is sent then */
-            if (chip::DeviceLayer::PlatformMgr().ScheduleWork(app_driver_fan_off_to_auto, 0) != CHIP_NO_ERROR) {
-                ESP_LOGE(TAG, "Failed to schedule the fan mode Low");
-            }
-            return;
-        }
         app_driver_update_fan_current(app_driver_get_power() &&
                                       app_driver_get_system_mode() != chip::to_underlying(Thermostat::SystemModeEnum::kOff));
         /* The IR TX task reads FanMode itself */
@@ -649,8 +641,8 @@ public:
 
     void OnRockSettingChanged(chip::BitMask<FanControl::RockBitmap> value) override
     {
-        bool vertical = value.Has(FanControl::RockBitmap::kRockUpDown);
-        bool horizontal = value.Has(FanControl::RockBitmap::kRockLeftRight);
+        bool vertical = APP_SWING_HORIZONTAL ? value.Has(FanControl::RockBitmap::kRockUpDown) : value.Raw() != 0;
+        bool horizontal = APP_SWING_HORIZONTAL && value.Has(FanControl::RockBitmap::kRockLeftRight);
         APP_LOG("[SWING]    %s (EP%u RockSetting 0x0202/0x0008 = %u)",
                 vertical ? (horizontal ? "both" : "up/down") : (horizontal ? "left/right" : "off"), thermostat_endpoint_id,
                 value.Raw());
@@ -835,6 +827,19 @@ static void app_driver_remote_battery_set(bool valid, uint8_t percent)
             thermostat_endpoint_id, percent);
     esp_matter_attr_val_t val = esp_matter_nullable_uint8(nullable<uint8_t>(percent));
     app_driver_update_attribute(PowerSource::Id, PowerSource::Attributes::BatPercentRemaining::Id, &val, "sensor report");
+}
+
+/* No sensor bound: the battery shows 0 % (a value, never null) until a bound sensor reports its battery */
+static void app_driver_battery_unbound()
+{
+    esp_matter_attr_val_t val = esp_matter_invalid(NULL);
+    if (attribute::get_val(thermostat_endpoint_id, PowerSource::Id, PowerSource::Attributes::BatPercentRemaining::Id,
+                           &val) == ESP_OK && val.val.u8 == 0) {
+        return;
+    }
+    APP_LOG("[BATTERY]  0 %%, no sensor bound (EP%u BatPercentRemaining 0x002F/0x000C = 0)", thermostat_endpoint_id);
+    val = esp_matter_nullable_uint8(nullable<uint8_t>(0));
+    app_driver_update_attribute(PowerSource::Id, PowerSource::Attributes::BatPercentRemaining::Id, &val, "no sensor bound");
 }
 
 static void app_driver_remote_battery_level_set(uint8_t charge_level)
@@ -1149,6 +1154,9 @@ static void app_driver_update_subscriptions(intptr_t arg)
     if (!humidity_binding && remote_humidity_valid) {
         app_driver_remote_humidity_set(false, 0);
     }
+    if (!battery_node) {
+        app_driver_battery_unbound();
+    }
 }
 
 void app_driver_bindings_changed()
@@ -1282,9 +1290,6 @@ static void app_driver_thermostat_start_work(intptr_t arg)
                               THERMOSTAT_ABS_MAX_COOL_SETPOINT);
     app_driver_clamp_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id, THERMOSTAT_ABS_MIN_HEAT_SETPOINT,
                               THERMOSTAT_ABS_MAX_HEAT_SETPOINT);
-
-    /* FanMode Off stored by an older firmware */
-    app_driver_fan_off_to_auto(0);
 
     /* Temperature and humidity of the sensor until its first report */
     app_driver_sensor_restore();

@@ -261,21 +261,24 @@ extern "C" void app_main()
     endpoint_t *endpoint = room_air_conditioner::create(node, &thermostat_config, ENDPOINT_FLAG_NONE, thermostat_handle);
     ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create the air conditioner endpoint"));
 
-    /* Fan of the air conditioner: Off, Low, Medium, High and Auto (FanModeSequence OffLowMedHighAuto), three speeds
-     * (MultiSpeed, SpeedMax 3) and PercentSetting. FanControl is code-driven, the application gets the changes
-     * through the delegate (app_driver.cpp), not through app_attribute_update_cb(). */
+    /* Fan of the air conditioner: Off, Low, Medium, High (FanModeSequence OffLowMedHigh), three speeds (MultiSpeed,
+     * SpeedMax 3) and PercentSetting. There is no Auto FanMode: in Auto PercentSetting has to be null and Apple Home
+     * shows the speed slider greyed out. Off (0 %) is the automatic fan of the air conditioner instead (a running
+     * unit always runs its fan). FanControl is code-driven, the application gets the changes through the delegate
+     * (app_driver.cpp), not through app_attribute_update_cb(). */
     cluster::fan_control::config_t fan_config;
-    fan_config.fan_mode = chip::to_underlying(FanControl::FanModeEnum::kAuto);
-    fan_config.fan_mode_sequence = chip::to_underlying(FanControl::FanModeSequenceEnum::kOffLowMedHighAuto);
+    fan_config.fan_mode = chip::to_underlying(FanControl::FanModeEnum::kOff);
+    fan_config.fan_mode_sequence = chip::to_underlying(FanControl::FanModeSequenceEnum::kOffLowMedHigh);
     fan_config.delegate = app_driver_fan_control_delegate();
     cluster_t *fan_cluster = cluster::fan_control::create(endpoint, &fan_config, CLUSTER_FLAG_SERVER);
     ABORT_APP_ON_FAILURE(fan_cluster != nullptr, ESP_LOGE(TAG, "Failed to create fan control cluster"));
-    cluster::fan_control::feature::fan_auto::add(fan_cluster);
     cluster::fan_control::feature::multi_speed::config_t fan_speed_config;
     fan_speed_config.speed_max = 3;
     cluster::fan_control::feature::multi_speed::add(fan_cluster, &fan_speed_config);
-    /* Louvers: RockSetting up/down and left/right, sent over IR as the swing of the remote. Not kept over a reboot:
-     * the air conditioner keeps its own swing. */
+    /* Louvers: RockSetting, sent over IR as the swing of the remote. Apple Home shows it as Swing (on/off) and writes
+     * RockLeftRight to switch it on, Home Assistant as oscillation (writes RockSupport). Both directions are offered so
+     * these writes are accepted; without IR_AC_SWING_HORIZONTAL any swing is the up/down swing (app_driver.cpp). Not
+     * kept over a reboot: the air conditioner keeps its own swing. */
     cluster::fan_control::feature::rocking::config_t fan_rock_config;
     fan_rock_config.rock_support = chip::to_underlying(FanControl::RockBitmap::kRockLeftRight) |
                                    chip::to_underlying(FanControl::RockBitmap::kRockUpDown);
@@ -316,10 +319,9 @@ extern "C" void app_main()
      * battery in the PowerSource server of the sensor. */
     cluster::temperature_measurement::create(endpoint, nullptr, CLUSTER_FLAG_CLIENT);
 
-    /* Everything is on the thermostat endpoint, like on commercial Matter thermostats (e.g. Meross MTS300 has
-     * Thermostat and RelativeHumidityMeasurement on its only endpoint). Apple Home then shows the humidity
-     * inside the thermostat accessory (iOS 18.5 or later). A separate Humidity Sensor endpoint would be shown
-     * as a separate accessory tile instead. */
+    /* Humidity of the bound sensor on the air conditioner endpoint (client: bound to the sensor, server: Home
+     * Assistant shows it in the climate entity). Apple Home shows the Room Air Conditioner as a Heater Cooler, which
+     * has no humidity; a separate Humidity Sensor endpoint would be a separate tile. */
     cluster::relative_humidity_measurement::config_t humidity_config;
     humidity_config.min_measured_value = nullable<uint16_t>(0);
     humidity_config.max_measured_value = nullable<uint16_t>(10000);
@@ -339,11 +341,11 @@ extern "C" void app_main()
     ABORT_APP_ON_FAILURE(battery_cluster != nullptr, ESP_LOGE(TAG, "Failed to create battery power source"));
     /* 0.5 % units. Never null: Apple Home reads it as the Battery Level of the accessory, and a read of a null value
      * failed on the home hub (HMErrorDomain 4), which marked the whole accessory "No Response" after every command.
-     * 100 % until the first report of the sensor, then the last reported value, kept in NVS over reboots and while
-     * the sensor is not reporting (not bound, out of range). */
+     * 0 % while no sensor is bound (app_driver.cpp), then the last reported value, kept in NVS over reboots and while
+     * the bound sensor is not reporting (out of range). */
     attribute_t *bat_percent = esp_matter::attribute::create(battery_cluster,
         PowerSource::Attributes::BatPercentRemaining::Id, ATTRIBUTE_FLAG_NULLABLE | ATTRIBUTE_FLAG_NONVOLATILE,
-        esp_matter_nullable_uint8(nullable<uint8_t>(200)));
+        esp_matter_nullable_uint8(nullable<uint8_t>(0)));
     ABORT_APP_ON_FAILURE(bat_percent != nullptr, ESP_LOGE(TAG, "Failed to create the battery percentage"));
     esp_matter::attribute::add_bounds(bat_percent, esp_matter_nullable_uint8(nullable<uint8_t>(0)),
                                       esp_matter_nullable_uint8(nullable<uint8_t>(200)));
