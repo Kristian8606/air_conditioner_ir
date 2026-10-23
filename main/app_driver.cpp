@@ -817,12 +817,16 @@ static void app_driver_sensor_restore()
 /* Store the battery of the sensor and show it in the PowerSource cluster of the thermostat endpoint.
  * percent is in 0.5 % units (200 == 100 %), as in the BatPercentRemaining attribute. An unknown value is not written:
  * the attribute keeps the last reported one (null made Apple Home show the accessory as "No Response"). */
+/* The bound sensor reported BatPercentRemaining since boot (some sensors only report BatChargeLevel) */
+static bool battery_percent_reported = false;
+
 static void app_driver_remote_battery_set(bool valid, uint8_t percent)
 {
     if (!valid) {
         APP_LOG("[BATTERY]  unknown, last value kept (EP%u BatPercentRemaining 0x002F/0x000C)", thermostat_endpoint_id);
         return;
     }
+    battery_percent_reported = true;
     APP_LOG("[BATTERY]  %d%s %% (EP%u BatPercentRemaining 0x002F/0x000C = %u)", percent / 2, percent % 2 ? ".5" : "",
             thermostat_endpoint_id, percent);
     esp_matter_attr_val_t val = esp_matter_nullable_uint8(nullable<uint8_t>(percent));
@@ -837,6 +841,7 @@ static void app_driver_battery_unbound()
                            &val) == ESP_OK && val.val.u8 == 0) {
         return;
     }
+    battery_percent_reported = false;
     APP_LOG("[BATTERY]  0 %%, no sensor bound (EP%u BatPercentRemaining 0x002F/0x000C = 0)", thermostat_endpoint_id);
     val = esp_matter_nullable_uint8(nullable<uint8_t>(0));
     app_driver_update_attribute(PowerSource::Id, PowerSource::Attributes::BatPercentRemaining::Id, &val, "no sensor bound");
@@ -849,6 +854,17 @@ static void app_driver_remote_battery_level_set(uint8_t charge_level)
             charge_level < 3 ? level_names[charge_level] : "unknown", thermostat_endpoint_id, charge_level);
     esp_matter_attr_val_t val = esp_matter_enum8(charge_level);
     app_driver_update_attribute(PowerSource::Id, PowerSource::Attributes::BatChargeLevel::Id, &val, "sensor report");
+
+    /* A sensor which reports no percentage: the level gives one (OK 100 %, Warning 20 %, Critical 5 %), otherwise the
+     * battery stayed at the 0 % of "no sensor bound" and Apple Home warned about an empty battery */
+    if (!battery_percent_reported && charge_level < 3) {
+        static const uint8_t level_percent[] = {200, 40, 10};   /* 0.5 % units */
+        APP_LOG("[BATTERY]  %u %% from the level, the sensor reports no percentage (EP%u BatPercentRemaining = %u)",
+                level_percent[charge_level] / 2, thermostat_endpoint_id, level_percent[charge_level]);
+        val = esp_matter_nullable_uint8(nullable<uint8_t>(level_percent[charge_level]));
+        app_driver_update_attribute(PowerSource::Id, PowerSource::Attributes::BatPercentRemaining::Id, &val,
+                                    "sensor report: charge level");
+    }
 }
 
 /*******************************************************************************
