@@ -16,8 +16,9 @@ conditioner does (log `[IR]`):
 |-----------|-------------------------------------------------------------------------------------|
 | Power     | On/Off on and SystemMode not Off                                                    |
 | Mode      | SystemMode: Heat, Cool, Auto (Dry and FanOnly if a controller sets them)            |
-| Setpoint  | Heat: heating setpoint, Cool/Dry/Fan: cooling setpoint, Auto: middle of the two. Sent in whole degrees (22.5 → 23), Matter keeps the value as written (`IR_AC_HALF_DEGREES` for remotes with 0.5 °C) |
-| Fan       | FanMode Low/Medium/High/Auto (Off is sent as Low: a running unit always runs its fan) |
+| Setpoint  | Heat: heating setpoint, Cool/Dry/Fan: cooling setpoint, Auto: middle of the two. Whole degrees: a controller writing 22.5 gets 23 in Matter too, so Apple Home and Home Assistant show what the unit gets (`IR_AC_HALF_DEGREES` for remotes with 0.5 °C) |
+| Fan       | FanMode Low/Medium/High/Auto. Off goes to Auto at once: a running unit always runs its fan |
+| Swing     | Fan Control RockSetting: up/down and left/right louvers (log `[SWING]`), not kept over a reboot |
 
 -   Only a change is sent: the sensor reports do not send anything. While the unit is off, changes of the mode,
     setpoint or fan are sent with the next power on.
@@ -58,12 +59,11 @@ information about building and flashing the firmware.
 
 ## 1. Data model
 
-Endpoint 1 is a Thermostat (0x0301, default) or a Room Air Conditioner (0x0072) device, menuconfig
-`Matter device type` (remove the device from the controllers and add it again after a change):
+Endpoint 1 is a Room Air Conditioner (0x0072) device:
 
 | Cluster                               | Role            | Purpose                                                           |
 |---------------------------------------|-----------------|-------------------------------------------------------------------|
-| On/Off                                | Server          | Power of the unit (DeadFrontBehavior), Room Air Conditioner only |
+| On/Off                                | Server          | Power of the unit (DeadFrontBehavior)                             |
 | Thermostat                            | Server          | SystemMode (Off/Heat/Cool/Auto), heating and cooling setpoints    |
 | Fan Control                           | Server          | FanMode Off/Low/Medium/High/Auto, 3 speeds, PercentSetting        |
 | Thermostat User Interface Configuration | Server        | Temperature display unit                                          |
@@ -73,9 +73,7 @@ Endpoint 1 is a Thermostat (0x0301, default) or a Room Air Conditioner (0x0072) 
 | Binding                               | Server          | Holds the binding to the remote sensor(s)                         |
 | Identify                              | Server          | Identify and TriggerEffect blink the status LED                   |
 
--   Thermostat: SystemMode Off switches the unit off, "off" of the original remote writes SystemMode Off. Home
-    Assistant shows a climate entity (modes, setpoints) and a fan entity (speed, low/medium/high/auto).
--   Room Air Conditioner: with On/Off off the unit is off, whatever SystemMode is. SystemMode, the setpoints and On/Off are stored
+-   With On/Off off the unit is off, whatever SystemMode is. SystemMode, the setpoints and On/Off are stored
     in NVS and restored after a reboot.
 -   Fan Control is a code-driven cluster in esp-matter: the FanControl server keeps the values (FanMode also
     in NVS) and the application gets the changes through `FanControl::Delegate::OnFanDriveStateChanged()`
@@ -101,7 +99,7 @@ Default pins for ESP32-C6-DevKitC-1/M-1 (menuconfig, `Air Conditioner Configurat
 
 | Function        | GPIO | Kconfig                              |
 |-----------------|------|--------------------------------------|
-| WS2812 LED      | 8    | `THERMOSTAT_STATUS_LED_GPIO`          |
+| WS2812 LED      | 8    | `AC_STATUS_LED_GPIO`          |
 | Boot button     | 9    | Factory reset (long press)            |
 | IR transmitter  | 4    | `IR_TX_GPIO` (menu `IR air conditioner`) |
 | IR receiver     | 5    | `IR_RX_GPIO` (menu `IR air conditioner`), -1 to disable |
@@ -138,18 +136,25 @@ and the serial number prefix (serial number = prefix + MAC address).
 
 -   The sensor temperature is calibrated first: `LocalTemperatureCalibration` (0x0010, 0.1 °C,
     -2.5 .. +2.5 °C) is added. The Thermostat server does not apply it, the application does. The first value
-    comes from `THERMOSTAT_TEMPERATURE_CALIBRATION`, a value written by a controller is kept in NVS, a change
+    comes from `AC_TEMPERATURE_CALIBRATION`, a value written by a controller is kept in NVS, a change
     recalculates the temperature at once. With chip-tool, for -0.5 °C:
     `chip-tool thermostat write local-temperature-calibration -5 <node-id> 1`.
--   Then it is rounded to the nearest `THERMOSTAT_TEMPERATURE_STEP` (default 0.5 °C: 24.20 -> 24.0,
+-   Then it is rounded to the nearest `AC_TEMPERATURE_STEP` (default 0.5 °C: 24.20 -> 24.0,
     24.30 -> 24.5) and shown as `LocalTemperature`. A step of 1 keeps the exact 0.01 °C value.
--   If the sensor does not report for `THERMOSTAT_SENSOR_TIMEOUT` seconds (default 300), the temperature
-    becomes unknown. Sleepy (ICD) Thread sensors may choose a longer max reporting interval, then the timeout
-    is extended to two max intervals + 60 s.
+-   If the sensor does not report for `AC_SENSOR_TIMEOUT` seconds (default 300), the temperature
+    becomes unknown for Auto. Sleepy (ICD) Thread sensors may choose a longer max reporting interval, then the
+    timeout is extended to two max intervals + 60 s.
+-   No value of the sensor is ever null in Matter: `LocalTemperature`, the humidity and the battery keep the last
+    reported value (kept in NVS, shown again after a reboot) while the sensor is silent or not bound. Apple Home
+    showed the whole accessory as "No Response" after reading a null value. Only a device which never had a sensor
+    report starts with an unknown temperature and humidity.
 
 Logs: every value has its own line with the `THERMOSTAT` tag (`idf.py monitor | grep THERMOSTAT`):
-`[POWER]`, `[MODE]`, `[SETPOINT]`, `[FAN]`, `[STATE]`, `[TEMP]`, `[CALIBR]`, `[HUMIDITY]`, `[BATTERY]`,
-`[IDENTIFY]`, `[IR]`.
+`[POWER]`, `[MODE]`, `[SETPOINT]`, `[FAN]`, `[SWING]`, `[STATE]`, `[TEMP]`, `[CALIBR]`, `[HUMIDITY]`,
+`[BATTERY]`, `[IDENTIFY]`, `[IR]`. The Matter stack only logs errors (`CHIP default log verbosity` = Error in
+`sdkconfig.defaults`; for Matter debugging menuconfig -> Component config -> CHIP Core -> Event Logging Options ->
+Progress). Without a bound temperature sensor `[SENSOR] no temperature sensor bound` is logged every
+5 minutes (the binding table is erased when the device is added again).
 
 ## 4. Home Assistant
 
@@ -207,17 +212,17 @@ fancontrol write fan-mode 2 0x7283 0x1
 
 | Option                               | Default | Description                                          |
 |--------------------------------------|---------|------------------------------------------------------|
-| `THERMOSTAT_ENABLE_AUTO`             | y       | AutoMode feature                                     |
-| `THERMOSTAT_MIN_SETPOINT`            | 16      | Lowest setpoint (°C)                                 |
-| `THERMOSTAT_MAX_SETPOINT`            | 30      | Highest setpoint (°C)                                |
-| `THERMOSTAT_DEAD_BAND`               | 0       | Auto dead band (0.1 °C)                              |
-| `THERMOSTAT_STATUS_LED_GPIO`         | 8       | WS2812 status LED, -1 to disable                     |
-| `THERMOSTAT_TEMPERATURE_STEP`        | 50      | Sensor temperature rounding step in 0.01 °C          |
-| `THERMOSTAT_TEMPERATURE_CALIBRATION` | 0       | Initial temperature calibration in 0.1 °C (-25..25)  |
-| `THERMOSTAT_SENSOR_MIN_INTERVAL`     | 5       | Subscription min interval (s)                        |
-| `THERMOSTAT_SENSOR_MAX_INTERVAL`     | 60      | Subscription max interval (s)                        |
-| `THERMOSTAT_SENSOR_TIMEOUT`          | 300     | Temperature unknown when the sensor is silent this long (s) |
-| `THERMOSTAT_TRACE_LOGS`              | n       | Debug logs of every attribute write                  |
+| `AC_ENABLE_AUTO`                     | y       | AutoMode feature                                     |
+| `AC_MIN_SETPOINT`                    | 16      | Lowest setpoint (°C)                                 |
+| `AC_MAX_SETPOINT`                    | 30      | Highest setpoint (°C)                                |
+| `AC_DEAD_BAND`                       | 0       | Auto dead band (0.1 °C)                              |
+| `AC_STATUS_LED_GPIO`                 | 8       | WS2812 status LED, -1 to disable                     |
+| `AC_TEMPERATURE_STEP`                | 50      | Sensor temperature rounding step in 0.01 °C          |
+| `AC_TEMPERATURE_CALIBRATION`         | 0       | Initial temperature calibration in 0.1 °C (-25..25)  |
+| `AC_SENSOR_MIN_INTERVAL`             | 5       | Subscription min interval (s)                        |
+| `AC_SENSOR_MAX_INTERVAL`             | 60      | Subscription max interval (s)                        |
+| `AC_SENSOR_TIMEOUT`                  | 300     | Temperature unknown when the sensor is silent this long (s) |
+| `AC_TRACE_LOGS`                      | n       | Debug logs of every attribute write                  |
 
 The default setpoints are in `main/app_priv.h`. The setpoint limits and the dead band are written back on
 every boot, because the old values are kept in NVS after a firmware update.

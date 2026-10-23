@@ -30,21 +30,21 @@ public:
     {
     }
 
-    CHIP_ERROR GetVendorName(char *buf, size_t bufSize) override { return copy_string(CONFIG_THERMOSTAT_VENDOR_NAME, buf, bufSize); }
+    CHIP_ERROR GetVendorName(char *buf, size_t bufSize) override { return copy_string(CONFIG_AC_VENDOR_NAME, buf, bufSize); }
 
     CHIP_ERROR GetProductName(char *buf, size_t bufSize) override
     {
-        return copy_string(CONFIG_THERMOSTAT_PRODUCT_NAME, buf, bufSize);
+        return copy_string(CONFIG_AC_PRODUCT_NAME, buf, bufSize);
     }
 
     CHIP_ERROR GetProductLabel(char *buf, size_t bufSize) override
     {
-        return copy_string(CONFIG_THERMOSTAT_PRODUCT_NAME, buf, bufSize);
+        return copy_string(CONFIG_AC_PRODUCT_NAME, buf, bufSize);
     }
 
     CHIP_ERROR GetHardwareVersionString(char *buf, size_t bufSize) override
     {
-        return copy_string(CONFIG_THERMOSTAT_HARDWARE_VERSION_STRING, buf, bufSize);
+        return copy_string(CONFIG_AC_HARDWARE_VERSION_STRING, buf, bufSize);
     }
 
     /* Unique per board: the factory programmed MAC address of the chip */
@@ -52,7 +52,7 @@ public:
     {
         uint8_t mac[6];
         VerifyOrReturnError(esp_read_mac(mac, ESP_MAC_BASE) == ESP_OK, CHIP_ERROR_INTERNAL);
-        int len = snprintf(buf, bufSize, "%s%02X%02X%02X%02X%02X%02X", CONFIG_THERMOSTAT_SERIAL_NUMBER_PREFIX, mac[0],
+        int len = snprintf(buf, bufSize, "%s%02X%02X%02X%02X%02X%02X", CONFIG_AC_SERIAL_NUMBER_PREFIX, mac[0],
                            mac[1], mac[2], mac[3], mac[4], mac[5]);
         VerifyOrReturnError(len > 0 && (size_t)len < bufSize, CHIP_ERROR_BUFFER_TOO_SMALL);
         return CHIP_NO_ERROR;

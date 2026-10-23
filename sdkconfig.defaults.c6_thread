@@ -64,7 +64,7 @@ CONFIG_BSP_BUTTON_1_GPIO=9
 CONFIG_BSP_BUTTON_1_LEVEL=0
 
 # Air conditioner: WS2812 status LED on GPIO8
-CONFIG_THERMOSTAT_STATUS_LED_GPIO=8
+CONFIG_AC_STATUS_LED_GPIO=8
 
 # Vendor/product name, serial number and hardware version from "Thermostat Device Information" (menuconfig)
 CONFIG_CUSTOM_DEVICE_INSTANCE_INFO_PROVIDER=y

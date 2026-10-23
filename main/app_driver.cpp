@@ -8,6 +8,7 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <nvs.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -80,9 +81,9 @@ static led_strip_handle_t status_led = nullptr;
 
 static void app_driver_status_led_init()
 {
-#if CONFIG_THERMOSTAT_STATUS_LED_GPIO >= 0
+#if CONFIG_AC_STATUS_LED_GPIO >= 0
     led_strip_config_t strip_config = {};
-    strip_config.strip_gpio_num = CONFIG_THERMOSTAT_STATUS_LED_GPIO;
+    strip_config.strip_gpio_num = CONFIG_AC_STATUS_LED_GPIO;
     strip_config.max_leds = 1;
     strip_config.led_model = LED_MODEL_WS2812;
     strip_config.color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB;
@@ -149,6 +150,28 @@ static int16_t app_driver_get_setpoint(uint32_t attribute_id, int16_t default_va
     return val.val.i16;
 }
 
+/* Setpoint step of the remote: whole degrees (most remotes, e.g. Fujitsu ARRAH2E), 0.5 degC with IR_AC_HALF_DEGREES */
+#if CONFIG_IR_AC_HALF_DEGREES
+#define APP_SETPOINT_STEP 50
+#else
+#define APP_SETPOINT_STEP 100
+#endif
+
+/* Read a setpoint and round it to the step of the remote in Matter too, so the controllers show what the air
+ * conditioner gets. Only a changed value is written; the write comes back through app_attribute_update_cb(). */
+static int16_t app_driver_round_setpoint(uint32_t attribute_id, int16_t default_value)
+{
+    int16_t setpoint = app_driver_get_setpoint(attribute_id, default_value);
+    int16_t rounded = (int16_t)((setpoint + APP_SETPOINT_STEP / 2) / APP_SETPOINT_STEP * APP_SETPOINT_STEP);
+    if (rounded != setpoint) {
+        APP_LOG("[SETPOINT] %d.%02d C rounded to %d.%02d C (step of the remote)", setpoint / 100, setpoint % 100,
+                rounded / 100, rounded % 100);
+        esp_matter_attr_val_t val = esp_matter_int16(rounded);
+        app_driver_update_attribute(Thermostat::Id, attribute_id, &val, "rounded to the step of the remote");
+    }
+    return rounded;
+}
+
 /* ThermostatRunningState and ThermostatRunningMode. The air conditioner controls the temperature itself and
  * gives no feedback over IR, so they are derived from the mode: Heat heats, Cool cools, FanOnly and Dry run the fan.
  * In Auto the remote temperature tells which way the unit works (fan only between the two setpoints). */
@@ -188,7 +211,7 @@ static void app_driver_update_running_state(Thermostat::SystemModeEnum mode, int
     esp_matter_attr_val_t val = esp_matter_bitmap16(running_state);
     app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::ThermostatRunningState::Id, &val,
                                 "running state");
-#if CONFIG_THERMOSTAT_ENABLE_AUTO
+#if CONFIG_AC_ENABLE_AUTO
     val = esp_matter_enum8(chip::to_underlying(running_mode));
     app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::ThermostatRunningMode::Id, &val,
                                 "running state");
@@ -343,30 +366,24 @@ static app_ir_fan_t app_driver_get_fan()
     }
     switch (fan->GetFanMode()) {
     case FanControl::FanModeEnum::kLow:
-    case FanControl::FanModeEnum::kOff:     /* An air conditioner which is on always runs its fan: lowest speed */
         return APP_IR_FAN_LOW;
     case FanControl::FanModeEnum::kMedium:
         return APP_IR_FAN_MEDIUM;
     case FanControl::FanModeEnum::kHigh:
         return APP_IR_FAN_HIGH;
-    default:                                /* Auto, On, Smart */
+    default:                                /* Auto, On, Smart; Off only until app_driver_fan_off_to_auto() */
         return APP_IR_FAN_AUTO;
     }
 }
 
-/* OnOff of the Room Air Conditioner (false if it cannot be read). A Thermostat has no OnOff: the power is SystemMode
- * alone, so it is always on here. */
+/* OnOff of the Room Air Conditioner (false if it cannot be read) */
 static bool app_driver_get_power()
 {
-#if CONFIG_AC_DEVICE_ROOM_AIR_CONDITIONER
     esp_matter_attr_val_t val = esp_matter_invalid(NULL);
     if (attribute::get_val(thermostat_endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val) != ESP_OK) {
         return false;
     }
     return val.val.b;
-#else
-    return true;
-#endif
 }
 
 /* PercentCurrent and SpeedCurrent are the speed the fan runs at. The FanControl server leaves them to the application
@@ -413,6 +430,12 @@ bool app_driver_ir_read_state(app_ir_state_t *state)
     *state = {};
     state->power = app_driver_get_power() && mode != SystemModeEnum::kOff;
     state->fan = app_driver_get_fan();
+    FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
+    if (fan) {
+        /* RockSetting of Fan Control: the louvers. RockRound (both directions) is not offered. */
+        state->swing_v = fan->GetRockSetting().Has(FanControl::RockBitmap::kRockUpDown);
+        state->swing_h = fan->GetRockSetting().Has(FanControl::RockBitmap::kRockLeftRight);
+    }
     switch (mode) {
     case SystemModeEnum::kHeat:
     case SystemModeEnum::kEmergencyHeat:
@@ -434,17 +457,14 @@ bool app_driver_ir_read_state(app_ir_state_t *state)
         break;
     default: {
         /* Auto (and Off, which only sends power off): the air conditioner has one target temperature, the
-         * middle of the heating/cooling range, rounded to 0.5 degC */
+         * middle of the heating/cooling range */
         state->mode = APP_IR_MODE_AUTO;
-        int middle = (heating_setpoint + cooling_setpoint) / 2;
-        state->setpoint = (int16_t)((middle + 25) / 50 * 50);
+        state->setpoint = (int16_t)((heating_setpoint + cooling_setpoint) / 2);
         break;
     }
     }
-#if !CONFIG_IR_AC_HALF_DEGREES
-    /* What is sent: whole degrees (the state is compared with what the receiver decodes) */
-    state->setpoint = (int16_t)((state->setpoint + 50) / 100 * 100);
-#endif
+    /* What is sent: the step of the remote (the state is compared with what the receiver decodes) */
+    state->setpoint = (int16_t)((state->setpoint + APP_SETPOINT_STEP / 2) / APP_SETPOINT_STEP * APP_SETPOINT_STEP);
     return true;
 }
 
@@ -458,12 +478,12 @@ static void app_driver_thermostat_update(intptr_t arg)
     bool power = app_driver_get_power();
     Thermostat::SystemModeEnum system_mode = power ? static_cast<Thermostat::SystemModeEnum>(app_driver_get_system_mode())
                                                    : Thermostat::SystemModeEnum::kOff;
-    int16_t heating_setpoint = app_driver_get_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id,
-                                                       THERMOSTAT_DEFAULT_HEAT_SETPOINT);
-    int16_t cooling_setpoint = app_driver_get_setpoint(Thermostat::Attributes::OccupiedCoolingSetpoint::Id,
-                                                       THERMOSTAT_DEFAULT_COOL_SETPOINT);
-    /* The setpoints stay as the controller wrote them (e.g. 22.5). Changing a value right after a controller wrote it
-     * made Apple Home show "Updating" / "No Response": only the IR message is rounded to whole degrees. */
+    /* The setpoints in Matter are what the air conditioner gets: whole degrees (Apple Home writes 23.5, it is shown as
+     * 24 like the IR message), half degrees with IR_AC_HALF_DEGREES */
+    int16_t heating_setpoint = app_driver_round_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id,
+                                                         THERMOSTAT_DEFAULT_HEAT_SETPOINT);
+    int16_t cooling_setpoint = app_driver_round_setpoint(Thermostat::Attributes::OccupiedCoolingSetpoint::Id,
+                                                         THERMOSTAT_DEFAULT_COOL_SETPOINT);
 
     APP_TRACE(TAG, "control reads mode %u, heat %d, cool %d", chip::to_underlying(system_mode), heating_setpoint,
               cooling_setpoint);
@@ -505,7 +525,7 @@ static Thermostat::SystemModeEnum app_driver_remote_system_mode(app_ir_mode_t mo
         return Thermostat::SystemModeEnum::kDry;
     case APP_IR_MODE_FAN:
         return Thermostat::SystemModeEnum::kFanOnly;
-#if CONFIG_THERMOSTAT_ENABLE_AUTO
+#if CONFIG_AC_ENABLE_AUTO
     case APP_IR_MODE_AUTO:
         return Thermostat::SystemModeEnum::kAuto;
 #endif
@@ -528,24 +548,12 @@ void app_driver_ir_apply_remote(const app_ir_state_t *state)
         return;
     }
     esp_matter_attr_val_t val = esp_matter_bool(state->power);
-#if CONFIG_AC_DEVICE_ROOM_AIR_CONDITIONER
     if (app_driver_get_power() != state->power) {
         app_driver_update_attribute(OnOff::Id, OnOff::Attributes::OnOff::Id, &val, "original remote");
     }
     if (!state->power) {
         return;     /* An "off" message of the remote carries nothing else */
     }
-#else
-    if (!state->power) {
-        /* No OnOff on a Thermostat: "off" of the remote is SystemMode Off */
-        if (app_driver_get_system_mode() != chip::to_underlying(Thermostat::SystemModeEnum::kOff)) {
-            val = esp_matter_enum8(chip::to_underlying(Thermostat::SystemModeEnum::kOff));
-            app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::SystemMode::Id, &val,
-                                        "original remote");
-        }
-        return;
-    }
-#endif
     Thermostat::SystemModeEnum mode = app_driver_remote_system_mode(state->mode);
     if (app_driver_get_system_mode() != chip::to_underlying(mode)) {
         val = esp_matter_enum8(chip::to_underlying(mode));
@@ -576,6 +584,12 @@ void app_driver_ir_apply_remote(const app_ir_state_t *state)
         if (fan->GetFanMode() != fan_modes[state->fan]) {
             fan->SetFanMode(fan_modes[state->fan]);
         }
+        chip::BitMask<FanControl::RockBitmap> rock;
+        rock.Set(FanControl::RockBitmap::kRockUpDown, state->swing_v);
+        rock.Set(FanControl::RockBitmap::kRockLeftRight, state->swing_h);
+        if (fan->GetRockSetting().Raw() != rock.Raw()) {
+            fan->SetRockSetting(rock);
+        }
     }
 }
 
@@ -586,6 +600,18 @@ void app_driver_ir_apply_remote(const app_ir_state_t *state)
 /* FanControl is a code-driven cluster: its attributes are not in the esp-matter attribute storage and a write
  * does not call app_attribute_update_cb(). The FanControl server keeps the values (FanMode also in NVS) and tells
  * the application through this delegate. */
+/* A running air conditioner always runs its fan: FanMode Off (e.g. the fan entity of Home Assistant switched off, or
+ * PercentSetting 0) goes to Auto, so the controllers show what the unit does. Scheduled from the delegate: the
+ * FanControl server ignores a new FanMode while it is still notifying the delegate. */
+static void app_driver_fan_off_to_auto(intptr_t arg)
+{
+    FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
+    if (fan && fan->GetFanMode() == FanControl::FanModeEnum::kOff) {
+        APP_LOG("[FAN]      Off is not possible on the air conditioner, Auto");
+        fan->SetFanMode(FanControl::FanModeEnum::kAuto);
+    }
+}
+
 class AppFanControlDelegate : public FanControl::Delegate {
 public:
     chip::Protocols::InteractionModel::Status HandleStep(FanControl::StepDirectionEnum direction, bool wrap,
@@ -608,9 +634,27 @@ public:
         if (thermostat_endpoint_id == chip::kInvalidEndpointId) {
             return;
         }
+        if (state.mode == FanControl::FanModeEnum::kOff) {
+            /* Auto follows at once and is sent then */
+            if (chip::DeviceLayer::PlatformMgr().ScheduleWork(app_driver_fan_off_to_auto, 0) != CHIP_NO_ERROR) {
+                ESP_LOGE(TAG, "Failed to schedule the fan mode Low");
+            }
+            return;
+        }
         app_driver_update_fan_current(app_driver_get_power() &&
                                       app_driver_get_system_mode() != chip::to_underlying(Thermostat::SystemModeEnum::kOff));
         /* The IR TX task reads FanMode itself */
+        app_ir_notify(false);
+    }
+
+    void OnRockSettingChanged(chip::BitMask<FanControl::RockBitmap> value) override
+    {
+        bool vertical = value.Has(FanControl::RockBitmap::kRockUpDown);
+        bool horizontal = value.Has(FanControl::RockBitmap::kRockLeftRight);
+        APP_LOG("[SWING]    %s (EP%u RockSetting 0x0202/0x0008 = %u)",
+                vertical ? (horizontal ? "both" : "up/down") : (horizontal ? "left/right" : "off"), thermostat_endpoint_id,
+                value.Raw());
+        /* The IR TX task reads RockSetting itself */
         app_ir_notify(false);
     }
 };
@@ -637,37 +681,82 @@ static int8_t app_driver_get_calibration()
     return val.val.i8;
 }
 
-/* Store a new temperature from the sensor, show it as LocalTemperature (CurrentTemperature in Apple Home)
- * and re-evaluate the thermostat. The Thermostat server does not apply LocalTemperatureCalibration itself:
- * the calibration is added first, then the value is rounded to the temperature step. */
-static void app_driver_remote_temperature_set(bool valid, int16_t sensor_temperature)
+/* The last values of the sensor are kept in NVS: after a reboot, or while the sensor is not reporting (not bound,
+ * out of range), the controllers keep showing them. A null value is never written: Apple Home showed the whole
+ * accessory as "No Response" after reading a null characteristic (the battery). */
+#define APP_SENSOR_NVS_NAMESPACE "app_sensor"
+#define APP_SENSOR_NVS_KEY_TEMPERATURE "temp"
+#define APP_SENSOR_NVS_KEY_HUMIDITY "humidity"
+
+static bool remote_sensor_temperature_known = false;    /* remote_sensor_temperature holds a value (also from NVS) */
+
+static void app_driver_sensor_store(const char *key, uint16_t value)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(APP_SENSOR_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        uint16_t stored = 0;
+        /* Only a changed value is written (flash wear) */
+        if (nvs_get_u16(handle, key, &stored) != ESP_OK || stored != value) {
+            err = nvs_set_u16(handle, key, value);
+            if (err == ESP_OK) {
+                err = nvs_commit(handle);
+            }
+        }
+        nvs_close(handle);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to store %s: %s", key, esp_err_to_name(err));
+    }
+}
+
+static bool app_driver_sensor_load(const char *key, uint16_t *value)
+{
+    nvs_handle_t handle;
+    if (nvs_open(APP_SENSOR_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+        return false;
+    }
+    bool found = nvs_get_u16(handle, key, value) == ESP_OK;
+    nvs_close(handle);
+    return found;
+}
+
+/* Show remote_sensor_temperature as LocalTemperature (CurrentTemperature in Apple Home). The Thermostat server does not
+ * apply LocalTemperatureCalibration itself: the calibration is added first, then the value is rounded to the
+ * temperature step. */
+static void app_driver_show_temperature(const char *reason)
 {
     int8_t calibration = app_driver_get_calibration();
 
     /* Calibration (0.1 degC) and rounding to the nearest temperature step (menuconfig), symmetric around 0 */
-    int calibrated = sensor_temperature + calibration * 10;
-    int step = CONFIG_THERMOSTAT_TEMPERATURE_STEP;
+    int calibrated = remote_sensor_temperature + calibration * 10;
+    int step = CONFIG_AC_TEMPERATURE_STEP;
     int rounded = (abs(calibrated) + step / 2) / step * step;
     rounded = calibrated < 0 ? -rounded : rounded;
     int16_t temperature = (int16_t)(rounded > INT16_MAX ? INT16_MAX : rounded < -27315 ? -27315 : rounded);
+    remote_temperature = temperature;
 
+    APP_LOG("[TEMP]     %s%d.%02d C%s (sensor %d, calibration %s%d.%d C, EP%u LocalTemperature 0x0201/0x0000 = %d)",
+            temperature < 0 ? "-" : "", abs(temperature) / 100, abs(temperature) % 100,
+            remote_temperature_valid ? "" : ", last known", remote_sensor_temperature, calibration < 0 ? "-" : "+",
+            abs(calibration) / 10, abs(calibration) % 10, thermostat_endpoint_id, temperature);
+    esp_matter_attr_val_t val = esp_matter_nullable_int16(nullable<int16_t>(temperature));
+    app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::LocalTemperature::Id, &val, reason);
+}
+
+/* A new temperature from the sensor, or valid == false when it is unknown (sensor silent, no binding): then
+ * LocalTemperature keeps the last value, only Auto stops using it. Re-evaluates the thermostat. */
+static void app_driver_remote_temperature_set(bool valid, int16_t sensor_temperature)
+{
     remote_temperature_valid = valid;
-    remote_sensor_temperature = valid ? sensor_temperature : 0;
-    remote_temperature = valid ? temperature : 0;
-
-    nullable<int16_t> local_temperature;
-    if (valid) {
-        local_temperature = nullable<int16_t>(temperature);
-        APP_LOG("[TEMP]     %s%d.%02d C (sensor %d, calibration %s%d.%d C, EP%u LocalTemperature 0x0201/0x0000 = %d)",
-                temperature < 0 ? "-" : "", abs(temperature) / 100, abs(temperature) % 100, sensor_temperature,
-                calibration < 0 ? "-" : "+", abs(calibration) / 10, abs(calibration) % 10, thermostat_endpoint_id,
-                temperature);
+    if (!valid) {
+        APP_LOG("[TEMP]     unknown, last value kept (EP%u LocalTemperature 0x0201/0x0000)", thermostat_endpoint_id);
     } else {
-        APP_LOG("[TEMP]     unknown (EP%u LocalTemperature 0x0201/0x0000 = null)", thermostat_endpoint_id);
+        remote_sensor_temperature = sensor_temperature;
+        remote_sensor_temperature_known = true;
+        app_driver_show_temperature("sensor report");
+        app_driver_sensor_store(APP_SENSOR_NVS_KEY_TEMPERATURE, (uint16_t)sensor_temperature);
     }
-    esp_matter_attr_val_t val = esp_matter_nullable_int16(local_temperature);
-    app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::LocalTemperature::Id, &val, "sensor report");
-
     app_driver_thermostat_update(0);
 }
 
@@ -676,9 +765,10 @@ static void app_driver_calibration_apply(intptr_t arg)
     int8_t calibration = app_driver_get_calibration();
     APP_LOG("[CALIBR]   %s%d.%d C (EP%u LocalTemperatureCalibration 0x0201/0x0010 = %d)", calibration < 0 ? "-" : "+",
             abs(calibration) / 10, abs(calibration) % 10, thermostat_endpoint_id, calibration);
-    if (remote_temperature_valid) {
+    if (remote_sensor_temperature_known) {
         /* Recalculate LocalTemperature from the last value of the sensor */
-        app_driver_remote_temperature_set(true, remote_sensor_temperature);
+        app_driver_show_temperature("calibration");
+        app_driver_thermostat_update(0);
     }
 }
 
@@ -689,24 +779,46 @@ void app_driver_calibration_changed()
     }
 }
 
+/* RelativeHumidityMeasurement is a code-driven cluster, its MeasuredValue is not kept in the esp-matter attribute
+ * storage, so it is set through the cluster instead of attribute::update(). */
+static void app_driver_show_humidity(uint16_t humidity)
+{
+    CHIP_ERROR err = RelativeHumidityMeasurement::SetMeasuredValue(thermostat_endpoint_id,
+                                                                   chip::app::DataModel::MakeNullable(humidity));
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "Failed to set humidity: %" CHIP_ERROR_FORMAT, err.Format());
+    }
+}
+
+/* A new humidity from the sensor, or valid == false: MeasuredValue keeps the last value */
 static void app_driver_remote_humidity_set(bool valid, uint16_t humidity)
 {
     remote_humidity_valid = valid;
-    remote_humidity = valid ? humidity : 0;
-
-    chip::app::DataModel::Nullable<uint16_t> measured_value;
-    if (valid) {
-        measured_value.SetNonNull(humidity);
-        APP_LOG("[HUMIDITY] %d.%02d %% (EP%u MeasuredValue 0x0405/0x0000 = %u)", humidity / 100, humidity % 100,
-                thermostat_endpoint_id, humidity);
-    } else {
-        APP_LOG("[HUMIDITY] unknown (EP%u MeasuredValue 0x0405/0x0000 = null)", thermostat_endpoint_id);
+    if (!valid) {
+        APP_LOG("[HUMIDITY] unknown, last value kept (EP%u MeasuredValue 0x0405/0x0000)", thermostat_endpoint_id);
+        return;
     }
-    /* RelativeHumidityMeasurement is a code-driven cluster, its MeasuredValue is not kept in the esp-matter
-     * attribute storage, so it is set through the cluster instead of attribute::update(). */
-    CHIP_ERROR err = RelativeHumidityMeasurement::SetMeasuredValue(thermostat_endpoint_id, measured_value);
-    if (err != CHIP_NO_ERROR) {
-        ESP_LOGE(TAG, "Failed to set humidity: %" CHIP_ERROR_FORMAT, err.Format());
+    remote_humidity = humidity;
+    APP_LOG("[HUMIDITY] %d.%02d %% (EP%u MeasuredValue 0x0405/0x0000 = %u)", humidity / 100, humidity % 100,
+            thermostat_endpoint_id, humidity);
+    app_driver_show_humidity(humidity);
+    app_driver_sensor_store(APP_SENSOR_NVS_KEY_HUMIDITY, humidity);
+}
+
+/* After a reboot: the last temperature and humidity of the sensor until it reports again (not used by Auto) */
+static void app_driver_sensor_restore()
+{
+    uint16_t value = 0;
+    if (app_driver_sensor_load(APP_SENSOR_NVS_KEY_TEMPERATURE, &value)) {
+        remote_sensor_temperature = (int16_t)value;
+        remote_sensor_temperature_known = true;
+        app_driver_show_temperature("boot: last value of the sensor");
+    }
+    if (app_driver_sensor_load(APP_SENSOR_NVS_KEY_HUMIDITY, &value) && value <= 10000) {
+        remote_humidity = value;
+        APP_LOG("[HUMIDITY] %d.%02d %%, last known (EP%u MeasuredValue 0x0405/0x0000 = %u)", value / 100, value % 100,
+                thermostat_endpoint_id, value);
+        app_driver_show_humidity(value);
     }
 }
 
@@ -842,7 +954,7 @@ public:
 
     CHIP_ERROR OnResubscriptionNeeded(ReadClient *client, CHIP_ERROR termination_cause) override
     {
-        /* The last value is kept until CONFIG_THERMOSTAT_SENSOR_TIMEOUT expires. */
+        /* The last value is kept until CONFIG_AC_SENSOR_TIMEOUT expires. */
         ESP_LOGW(TAG, "Sensor subscription lost: %" CHIP_ERROR_FORMAT ", resubscribing", termination_cause.Format());
         return client->DefaultResubscribePolicy(termination_cause);
     }
@@ -915,8 +1027,8 @@ private:
         chip::app::ReadPrepareParams params;
         params.mpAttributePathParamsList = m_paths;
         params.mAttributePathParamsListSize = m_path_count;
-        params.mMinIntervalFloorSeconds = CONFIG_THERMOSTAT_SENSOR_MIN_INTERVAL;
-        params.mMaxIntervalCeilingSeconds = CONFIG_THERMOSTAT_SENSOR_MAX_INTERVAL;
+        params.mMinIntervalFloorSeconds = CONFIG_AC_SENSOR_MIN_INTERVAL;
+        params.mMaxIntervalCeilingSeconds = CONFIG_AC_SENSOR_MAX_INTERVAL;
         /* Keep the other subscriptions when several sensors are bound */
         params.mKeepSubscriptions = true;
         params.mIsFabricFiltered = false;
@@ -1064,10 +1176,10 @@ void app_driver_bindings_loaded()
 }
 
 /* The sensor sends a report at least every max interval. Allow two missed reports before the
- * temperature is treated as unknown, but never less than CONFIG_THERMOSTAT_SENSOR_TIMEOUT. */
+ * temperature is treated as unknown, but never less than CONFIG_AC_SENSOR_TIMEOUT. */
 static int64_t app_driver_sensor_timeout_us()
 {
-    int64_t timeout_sec = CONFIG_THERMOSTAT_SENSOR_TIMEOUT;
+    int64_t timeout_sec = CONFIG_AC_SENSOR_TIMEOUT;
     int64_t report_timeout_sec = 2 * (int64_t)remote_temperature_max_interval + 60;
     if (report_timeout_sec > timeout_sec) {
         timeout_sec = report_timeout_sec;
@@ -1087,6 +1199,15 @@ static void app_driver_sensor_check_timer_cb(chip::System::Layer *system_layer, 
         app_driver_update_subscriptions(0);
         for (size_t i = 0; i < SENSOR_MAX_NODES; i++) {
             sensor_subscriptions[i].retry();
+        }
+        /* The binding table is erased with the fabrics: after the device is added again the sensor has to be bound
+         * again, otherwise there is no temperature, humidity or battery. Reminded at once, then every 5 minutes. */
+        static uint32_t unbound_checks = 0;
+        if (app_driver_find_binding(TemperatureMeasurement::Id, true)) {
+            unbound_checks = 0;
+        } else if (unbound_checks++ % 10 == 0) {
+            ESP_LOGW(TAG, "[SENSOR] no temperature sensor bound: bind TemperatureMeasurement (0x0402) and "
+                     "RelativeHumidityMeasurement (0x0405) of endpoint %u to the sensor", thermostat_endpoint_id);
         }
     }
 
@@ -1138,7 +1259,7 @@ static void app_driver_clamp_setpoint(uint32_t attribute_id, int16_t min, int16_
 
 static void app_driver_thermostat_start_work(intptr_t arg)
 {
-#if CONFIG_THERMOSTAT_ENABLE_AUTO
+#if CONFIG_AC_ENABLE_AUTO
     /* MinSetpointDeadBand is non-volatile: apply the value from menuconfig over the one stored by an older
      * firmware, before the setpoints are checked against the limits. */
     esp_matter_attr_val_t dead_band = esp_matter_invalid(NULL);
@@ -1161,6 +1282,12 @@ static void app_driver_thermostat_start_work(intptr_t arg)
                               THERMOSTAT_ABS_MAX_COOL_SETPOINT);
     app_driver_clamp_setpoint(Thermostat::Attributes::OccupiedHeatingSetpoint::Id, THERMOSTAT_ABS_MIN_HEAT_SETPOINT,
                               THERMOSTAT_ABS_MAX_HEAT_SETPOINT);
+
+    /* FanMode Off stored by an older firmware */
+    app_driver_fan_off_to_auto(0);
+
+    /* Temperature and humidity of the sensor until its first report */
+    app_driver_sensor_restore();
 
     /* The IR TX task remembers the state restored from NVS (nothing is sent on boot) */
     app_ir_notify(false);

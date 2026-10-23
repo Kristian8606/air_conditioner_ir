@@ -32,6 +32,8 @@ typedef struct {
     app_ir_mode_t mode;
     int16_t setpoint;       /* 0.01 degC */
     app_ir_fan_t fan;
+    bool swing_v;           /* Louvers swing up and down */
+    bool swing_h;           /* Louvers swing left and right */
 } app_ir_state_t;
 
 /** Start the IR task. The IR transmitter (menuconfig: IR air conditioner) is set up with the first message. */

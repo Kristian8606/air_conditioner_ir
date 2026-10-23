@@ -148,8 +148,7 @@ static esp_err_t app_attribute_update_cb(callback_type_t type, uint16_t endpoint
 
     if (type == POST_UPDATE && endpoint_id == thermostat_endpoint_id && cluster_id == Thermostat::Id) {
         /* A controller (e.g. Apple Home) changed the mode or one of the setpoints. The new values are
-         * read back from the data model in the driver, after the Thermostat server has finished the
-         * write (including the dead band adjustment of the other setpoint in Auto). */
+         * read back from the data model in the driver, after the write has finished. */
         if (attribute_id == Thermostat::Attributes::SystemMode::Id) {
             APP_LOG("[MODE]     %s (EP%u SystemMode 0x0201/0x001C = %u)", app_system_mode_name(val->val.u8),
                     endpoint_id, val->val.u8);
@@ -192,7 +191,7 @@ static void app_thermostat_add_optional_attributes(cluster_t *cluster)
     thermostat_attr::create_abs_max_cool_setpoint_limit(cluster, THERMOSTAT_ABS_MAX_COOL_SETPOINT);
     thermostat_attr::create_min_cool_setpoint_limit(cluster, THERMOSTAT_ABS_MIN_COOL_SETPOINT);
     thermostat_attr::create_max_cool_setpoint_limit(cluster, THERMOSTAT_ABS_MAX_COOL_SETPOINT);
-#if CONFIG_THERMOSTAT_ENABLE_AUTO
+#if CONFIG_AC_ENABLE_AUTO
     /* ThermostatRunningMode is mandatory with the AutoMode feature. */
     thermostat_attr::create_thermostat_running_mode(cluster,
         chip::to_underlying(Thermostat::ThermostatRunningModeEnum::kOff));
@@ -205,7 +204,7 @@ static void app_thermostat_add_optional_attributes(cluster_t *cluster)
     /* Offset added to the sensor temperature (0.1 degC). The default from menuconfig is used on the very first
      * boot only, afterwards the value is restored from NVS. */
     attribute_t *calibration = thermostat_attr::create_local_temperature_calibration(cluster,
-        CONFIG_THERMOSTAT_TEMPERATURE_CALIBRATION);
+        CONFIG_AC_TEMPERATURE_CALIBRATION);
     if (calibration) {
         esp_matter::attribute::add_bounds(calibration, esp_matter_int8(THERMOSTAT_MIN_CALIBRATION),
                                           esp_matter_int8(THERMOSTAT_MAX_CALIBRATION));
@@ -236,18 +235,12 @@ extern "C" void app_main()
     cluster::basic_information::attribute::create_serial_number(basic_info_cluster, NULL, 0);
     cluster::basic_information::attribute::create_product_label(basic_info_cluster, NULL, 0);
 
-#if CONFIG_AC_DEVICE_ROOM_AIR_CONDITIONER
     /* Room Air Conditioner (0x0072): Identify, OnOff (with the DeadFrontBehavior feature) and Thermostat (Cooling is
      * always added by esp-matter). FanControl is added below. */
     room_air_conditioner::config_t thermostat_config;
     /* Off on the very first boot, OnOff is non-volatile afterwards */
     thermostat_config.on_off.on_off = false;
-#else
-    /* Thermostat (0x0301): Identify, Groups, ScenesManagement and Thermostat, no OnOff: SystemMode Off switches the
-     * unit off. FanControl (optional on a Thermostat) is added below. */
-    endpoint::thermostat::config_t thermostat_config;
-#endif
-    /* Unknown until the first report from the remote sensor. */
+    /* Unknown until the first report from the remote sensor, or the last value of the sensor from NVS (app_driver.cpp) */
     thermostat_config.thermostat.local_temperature = nullable<int16_t>();
     /* Off on the very first boot. SystemMode and the setpoints are non-volatile, so after a reboot the
      * values selected by the user are restored from NVS. */
@@ -260,16 +253,12 @@ extern "C" void app_main()
         chip::to_underlying(Thermostat::ControlSequenceOfOperationEnum::kCoolingAndHeating);
     thermostat_config.thermostat.feature_flags |= cluster::thermostat::feature::cooling::get_id();
     thermostat_config.thermostat.features.cooling.occupied_cooling_setpoint = THERMOSTAT_DEFAULT_COOL_SETPOINT;
-#if CONFIG_THERMOSTAT_ENABLE_AUTO
+#if CONFIG_AC_ENABLE_AUTO
     thermostat_config.thermostat.feature_flags |= cluster::thermostat::feature::auto_mode::get_id();
     thermostat_config.thermostat.features.auto_mode.min_setpoint_dead_band = THERMOSTAT_MIN_SETPOINT_DEAD_BAND;
 #endif
 
-#if CONFIG_AC_DEVICE_ROOM_AIR_CONDITIONER
     endpoint_t *endpoint = room_air_conditioner::create(node, &thermostat_config, ENDPOINT_FLAG_NONE, thermostat_handle);
-#else
-    endpoint_t *endpoint = endpoint::thermostat::create(node, &thermostat_config, ENDPOINT_FLAG_NONE, thermostat_handle);
-#endif
     ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create the air conditioner endpoint"));
 
     /* Fan of the air conditioner: Off, Low, Medium, High and Auto (FanModeSequence OffLowMedHighAuto), three speeds
@@ -285,6 +274,12 @@ extern "C" void app_main()
     cluster::fan_control::feature::multi_speed::config_t fan_speed_config;
     fan_speed_config.speed_max = 3;
     cluster::fan_control::feature::multi_speed::add(fan_cluster, &fan_speed_config);
+    /* Louvers: RockSetting up/down and left/right, sent over IR as the swing of the remote. Not kept over a reboot:
+     * the air conditioner keeps its own swing. */
+    cluster::fan_control::feature::rocking::config_t fan_rock_config;
+    fan_rock_config.rock_support = chip::to_underlying(FanControl::RockBitmap::kRockLeftRight) |
+                                   chip::to_underlying(FanControl::RockBitmap::kRockUpDown);
+    cluster::fan_control::feature::rocking::add(fan_cluster, &fan_rock_config);
 
     /* TriggerEffect is optional in the Identify cluster, the status LED supports the effects */
     cluster_t *identify_cluster = cluster::get(endpoint, Identify::Id);

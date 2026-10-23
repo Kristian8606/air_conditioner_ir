@@ -83,7 +83,8 @@ static volatile bool app_ir_matter_ready = false;
 
 static bool app_ir_state_equal(const app_ir_state_t &a, const app_ir_state_t &b)
 {
-    return a.power == b.power && a.mode == b.mode && a.setpoint == b.setpoint && a.fan == b.fan;
+    return a.power == b.power && a.mode == b.mode && a.setpoint == b.setpoint && a.fan == b.fan &&
+           a.swing_v == b.swing_v && a.swing_h == b.swing_h;
 }
 
 /* Read the state from Matter. The attributes belong to the Matter task: lock its stack while reading. */
@@ -151,6 +152,11 @@ static void app_ir_model_store(int16_t model)
     }
 }
 
+static const char *app_ir_swing_name(const app_ir_state_t &state)
+{
+    return state.swing_v ? (state.swing_h ? "both" : "up/down") : (state.swing_h ? "left/right" : "off");
+}
+
 static stdAc::opmode_t app_ir_opmode(app_ir_mode_t mode)
 {
     switch (mode) {
@@ -215,14 +221,16 @@ static void app_ir_task(void *arg)
         next.degrees = APP_IR_HALF_DEGREES ? roundf(state.setpoint / 50.0f) / 2.0f : roundf(state.setpoint / 100.0f);
         next.celsius = true;
         next.fanspeed = app_ir_fanspeed(state.fan);
+        next.swingv = state.swing_v ? stdAc::swingv_t::kAuto : stdAc::swingv_t::kOff;
+        next.swingh = state.swing_h ? stdAc::swingh_t::kAuto : stdAc::swingh_t::kOff;
         ac.next = next;
 
         static const char *const mode_names[] = {"Auto", "Cool", "Heat", "Dry", "Fan"};
         static const char *const fan_names[] = {"Auto", "Low", "Medium", "High"};
         bool sent = ac.sendAc();
-        APP_LOG("[IR]       %s %s model %d, power %s, mode %s, %.1f C, fan %s (GPIO%d)", sent ? "sent" : "NOT sent",
-                CONFIG_IR_AC_PROTOCOL, (int)next.model, state.power ? "ON" : "OFF", mode_names[state.mode],
-                next.degrees, fan_names[state.fan], CONFIG_IR_TX_GPIO);
+        APP_LOG("[IR]       %s %s model %d, power %s, mode %s, %.1f C, fan %s, swing %s (GPIO%d)",
+                sent ? "sent" : "NOT sent", CONFIG_IR_AC_PROTOCOL, (int)next.model, state.power ? "ON" : "OFF",
+                mode_names[state.mode], next.degrees, fan_names[state.fan], app_ir_swing_name(state), CONFIG_IR_TX_GPIO);
         if (APP_IR_VERBOSE) {
             APP_LOG("[MEMORY]   heap free %u, lowest %u bytes, IR task stack left %u bytes",
                     (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size(),
@@ -355,6 +363,8 @@ static bool app_ir_remote_state(const decode_results &results, app_ir_state_t *s
     if (ac.quiet) {
         state->fan = APP_IR_FAN_LOW;
     }
+    state->swing_v = ac.swingv != stdAc::swingv_t::kOff;
+    state->swing_h = ac.swingh != stdAc::swingh_t::kOff;
     return true;
 }
 
@@ -409,8 +419,9 @@ static void app_ir_apply_remote(const app_ir_state_t &state)
         return;
     }
 
-    APP_LOG("[REMOTE]   power %s, mode %s, %d C, fan %s -> Matter (no IR sent back)", state.power ? "ON" : "OFF",
-            mode_names[state.mode], state.setpoint / 100, fan_names[state.fan]);
+    APP_LOG("[REMOTE]   power %s, mode %s, %d C, fan %s, swing %s -> Matter (no IR sent back)",
+            state.power ? "ON" : "OFF", mode_names[state.mode], state.setpoint / 100, fan_names[state.fan],
+            app_ir_swing_name(state));
     /* The attributes belong to the Matter task: lock its stack while writing */
     chip::DeviceLayer::PlatformMgr().LockChipStack();
     app_driver_ir_apply_remote(&state);

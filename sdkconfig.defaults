@@ -59,3 +59,8 @@ CONFIG_DEVICE_PRODUCT_ID=0x8001
 
 # CHIP project configuration (CASE client pool, see main/matter_project_config.h)
 CONFIG_CHIP_PROJECT_CONFIG="main/matter_project_config.h"
+
+# Matter (CHIP) logs: errors only. The ESP32 port prints the "I (...) chip[EM]: " prefix of every progress log
+# itself, so a runtime log level leaves empty lines. For Matter debugging: menuconfig -> Component config ->
+# CHIP Core -> Event Logging Options -> CHIP default log verbosity -> Progress.
+CONFIG_CHIP_LOG_DEFAULT_LEVEL_ERROR=y
