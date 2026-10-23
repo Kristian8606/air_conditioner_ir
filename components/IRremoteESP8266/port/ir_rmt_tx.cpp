@@ -93,8 +93,14 @@ static bool ir_rmt_tx_create(uint16_t gpio, bool inverted)
             return false;
         }
     }
-    /* Strongest output (about 40 mA): an IR LED without a transistor driver reaches further */
+#if CONFIG_IR_TX_TRANSISTOR
+    /* The GPIO only drives the base of the transistor: low drive strength (about 10 mA), it also limits the base
+     * current when there is no base resistor */
+    gpio_set_drive_capability(static_cast<gpio_num_t>(gpio), GPIO_DRIVE_CAP_1);
+#else
+    /* Strongest output (about 40 mA): an IR LED directly on the GPIO reaches further */
     gpio_set_drive_capability(static_cast<gpio_num_t>(gpio), GPIO_DRIVE_CAP_3);
+#endif
     ir_channel_gpio = gpio;
     ir_channel_inverted = inverted;
     ESP_LOGI(TAG, "IR transmitter on GPIO%u", gpio);

@@ -124,8 +124,9 @@ blink, StopEffect stops at once. The factory reset indication has priority over 
 
 IR air conditioner (menuconfig, `IR air conditioner`): protocol `FUJITSU_AC` (default, all air conditioner
 protocols of IRremoteESP8266 can be selected, only the selected one is compiled), model `1` (Fujitsu: 1 ARRAH2E,
-2 ARDB1, 3 ARREB1E, 4 ARJW2, 5 ARRY4, 6 ARREW4E), transmitter GPIO 4. The IR LED needs a transistor driver,
-a GPIO cannot drive it directly.
+2 ARDB1, 3 ARREB1E, 4 ARJW2, 5 ARRY4, 6 ARREW4E), transmitter GPIO 4. The IR LED needs a transistor driver
+(e.g. BC337, 12-33 ohm to the LED from 5 V, 470 ohm - 1 kohm to the base); `IR_TX_TRANSISTOR` (default on) gives the
+GPIO a low drive strength for the base, off is for an LED directly on the GPIO (strongest drive).
 
 Factory reset: hold the BOOT button (GPIO 9) for 5 s, the LED turns purple, release it. All fabrics, the
 Thread network, the bindings and the settings are erased. Remove the device from the controllers (and its

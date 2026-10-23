@@ -344,6 +344,15 @@ menu "IR air conditioner"
             messages, our own echo, the full description of received messages and the memory use. Long logs
             take time on the console: keep it off in normal use.
 
+    config IR_TX_TRANSISTOR
+        bool "IR LED driven by a transistor"
+        default y
+        help
+            The IR LED is switched by a transistor (e.g. BC337 with 12-33 ohm to the LED from 5 V): the GPIO only
+            drives the base and gets a low drive strength (about 10 mA), which also limits the base current
+            without a base resistor (470 ohm - 1 kohm is still recommended). Off: the LED is directly on the GPIO,
+            which then gets the strongest drive (about 40 mA, more than the recommended current of the pin).
+
     config IR_TX_INVERTED
         bool "Inverted IR output"
         default n

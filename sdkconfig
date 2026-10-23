@@ -5330,6 +5330,8 @@ CONFIG_IR_RX_GPIO=5
 # default:
 # CONFIG_IR_VERBOSE_LOGS is not set
 # default:
+CONFIG_IR_TX_TRANSISTOR=y
+# default:
 # CONFIG_IR_TX_INVERTED is not set
 # end of IR air conditioner
 
