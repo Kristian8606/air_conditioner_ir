@@ -60,7 +60,6 @@ static int16_t remote_sensor_temperature = 0;   /* 0.01 degC, as reported by the
 static bool remote_temperature_valid = false;
 static int64_t remote_temperature_last_seen_us = 0;
 static uint16_t remote_temperature_max_interval = 0;  /* negotiated with the sensor, seconds */
-static uint16_t remote_humidity = 0;            /* 0.01 % */
 static bool remote_humidity_valid = false;
 
 /* The button is held long enough for a factory reset, released it resets the device */
@@ -629,17 +628,18 @@ public:
 
     void OnFanDriveStateChanged(const FanControl::FanDriveState &state) override
     {
-        static const char *const mode_names[] = {"Off (auto of the unit)", "Low", "Medium", "High", "On", "Auto", "Smart"};
-        uint8_t mode = chip::to_underlying(state.mode);
-        APP_LOG("[FAN]      %s, percent %d (setting %d), speed %d (setting %d) (EP%u FanMode 0x0202/0x0000 = %u)",
-                mode < 7 ? mode_names[mode] : "Unknown", state.percentCurrent,
-                state.percentSetting.IsNull() ? -1 : state.percentSetting.Value(), state.speedCurrent,
-                state.speedSetting.IsNull() ? -1 : state.speedSetting.Value(), thermostat_endpoint_id, mode);
-        /* Called by the FanControl server on the Matter thread: the current speed follows the new setting. On boot the
-         * server restores FanMode before app_driver_thermostat_start(), thermostat_update sets it then. */
+        /* On boot the FanControl server restores FanMode from NVS before app_driver_thermostat_start(): nothing to do
+         * yet, thermostat_update sets the current speed then */
         if (thermostat_endpoint_id == chip::kInvalidEndpointId) {
             return;
         }
+        static const char *const mode_names[] = {"Off (auto of the unit)", "Low", "Medium", "High", "On", "Auto", "Smart"};
+        uint8_t mode = chip::to_underlying(state.mode);
+        APP_LOG("[FAN]      %s, setting %d %%, speed %d (EP%u FanMode 0x0202/0x0000 = %u)",
+                mode < 7 ? mode_names[mode] : "Unknown", state.percentSetting.IsNull() ? -1 : state.percentSetting.Value(),
+                state.speedSetting.IsNull() ? -1 : state.speedSetting.Value(), thermostat_endpoint_id, mode);
+        /* Called with the Matter stack locked (a controller on the Matter thread, the original remote from the IR RX
+         * task): the current speed follows the new setting */
         app_driver_update_fan_current(app_driver_get_power() &&
                                       app_driver_get_system_mode() != chip::to_underlying(Thermostat::SystemModeEnum::kOff));
         /* The IR TX task reads FanMode itself */
@@ -797,7 +797,6 @@ static void app_driver_remote_humidity_set(bool valid, uint16_t humidity)
         APP_LOG("[HUMIDITY] unknown, last value kept (EP%u MeasuredValue 0x0405/0x0000)", thermostat_endpoint_id);
         return;
     }
-    remote_humidity = humidity;
     APP_LOG("[HUMIDITY] %d.%02d %% (EP%u MeasuredValue 0x0405/0x0000 = %u)", humidity / 100, humidity % 100,
             thermostat_endpoint_id, humidity);
     app_driver_show_humidity(humidity);
@@ -814,7 +813,6 @@ static void app_driver_sensor_restore()
         app_driver_show_temperature("boot: last value of the sensor");
     }
     if (app_driver_sensor_load(APP_SENSOR_NVS_KEY_HUMIDITY, &value) && value <= 10000) {
-        remote_humidity = value;
         APP_LOG("[HUMIDITY] %d.%02d %%, last known (EP%u MeasuredValue 0x0405/0x0000 = %u)", value / 100, value % 100,
                 thermostat_endpoint_id, value);
         app_driver_show_humidity(value);
@@ -1255,8 +1253,8 @@ static void app_driver_sensor_check_timer_cb(chip::System::Layer *system_layer, 
 }
 
 /* Min/MaxHeat/CoolSetpointLimit are non-volatile: after an update of the firmware, the values stored by the
- * older firmware are restored from NVS instead of the ones in menuconfig. Write the current limits back,
- * otherwise the Thermostat server keeps rejecting setpoints between the old and the new limit. */
+ * older firmware are restored from NVS instead of the ones in menuconfig. Write the current limits back, the
+ * controllers offer the setpoint range from them. */
 static void app_driver_restore_limit(uint32_t attribute_id, int16_t limit)
 {
     esp_matter_attr_val_t val = esp_matter_invalid(NULL);

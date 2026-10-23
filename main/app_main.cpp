@@ -141,7 +141,7 @@ static esp_err_t app_attribute_update_cb(callback_type_t type, uint16_t endpoint
             attribute_id != Thermostat::Attributes::LocalTemperature::Id &&
             attribute_id != Thermostat::Attributes::ThermostatRunningState::Id &&
             attribute_id != Thermostat::Attributes::ThermostatRunningMode::Id) {
-        /* Writes by a controller come with the chip[EM] "WriteRequest" line of that controller just before */
+        /* With CHIP Progress logs (menuconfig) the chip[EM] "WriteRequest" line of the controller comes just before */
         APP_TRACE(TAG, "%s Thermostat attr 0x%04" PRIx32 " = %" PRId32,
                   type == PRE_UPDATE ? "PRE_UPDATE " : "POST_UPDATE", attribute_id, app_trace_value(val));
     }
@@ -351,7 +351,7 @@ extern "C" void app_main()
                                       esp_matter_nullable_uint8(nullable<uint8_t>(200)));
 
     thermostat_endpoint_id = endpoint::get_id(endpoint);
-    ESP_LOGI(TAG, "Thermostat created with endpoint_id %d", thermostat_endpoint_id);
+    ESP_LOGI(TAG, "Air conditioner created with endpoint_id %d", thermostat_endpoint_id);
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     /* Set OpenThread platform config */
