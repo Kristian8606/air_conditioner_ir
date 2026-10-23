@@ -55,12 +55,21 @@ static const char *TAG = "app_ir";
 #define APP_IR_VERBOSE false
 #endif
 
-/* Both IR tasks run below the Matter task (CONFIG_CHIP_TASK_PRIORITY): the RMT keeps the IR timing in hardware,
- * the tasks only queue, wait and decode, they must never hold up Matter (and OpenThread above it). */
-#define APP_IR_BELOW_MATTER_PRIORITY (CONFIG_CHIP_TASK_PRIORITY > 1 ? CONFIG_CHIP_TASK_PRIORITY - 1 : tskIDLE_PRIORITY)
+/* Both IR tasks run just above the Matter task (CONFIG_CHIP_TASK_PRIORITY, 1) and below OpenThread
+ * (CONFIG_OPENTHREAD_TASK_PRIORITY, 5), so the radio is never held up. "Below Matter" was the idle priority 0: the IR
+ * tasks only got the CPU when nothing else ran and a command waited several seconds while Matter was busy (e.g. a
+ * CASE session with a controller). They cannot hold up Matter: they block on a notification or the receiver queue,
+ * the RMT keeps the IR timing in hardware, decoding a message takes a few ms, and the attributes are read and
+ * written with the Matter stack locked. */
+#ifdef CONFIG_OPENTHREAD_TASK_PRIORITY
+#define APP_IR_ABOVE_MATTER_PRIORITY (CONFIG_CHIP_TASK_PRIORITY + 1 < CONFIG_OPENTHREAD_TASK_PRIORITY ? \
+                                      CONFIG_CHIP_TASK_PRIORITY + 1 : CONFIG_CHIP_TASK_PRIORITY)
+#else
+#define APP_IR_ABOVE_MATTER_PRIORITY (CONFIG_CHIP_TASK_PRIORITY + 1)
+#endif
 
 #define APP_IR_TASK_STACK_SIZE 6144
-#define APP_IR_TASK_PRIORITY APP_IR_BELOW_MATTER_PRIORITY
+#define APP_IR_TASK_PRIORITY APP_IR_ABOVE_MATTER_PRIORITY
 /* Moving a slider writes several values in a row: only the last one is sent, after this pause */
 #define APP_IR_SETTLE_MS 500
 
@@ -245,7 +254,7 @@ static void app_ir_task(void *arg)
  ******************************************************************************/
 
 #define APP_IR_RX_TASK_STACK_SIZE 8192
-#define APP_IR_RX_TASK_PRIORITY APP_IR_BELOW_MATTER_PRIORITY
+#define APP_IR_RX_TASK_PRIORITY APP_IR_ABOVE_MATTER_PRIORITY
 /* A space longer than this ends a message (kTimeoutMs of IRremoteESP8266) */
 #define APP_IR_RX_IDLE_US 15000
 #define APP_IR_RX_MAX_DURATIONS 2048

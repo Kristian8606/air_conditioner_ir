@@ -35,8 +35,8 @@ conditioner does (log `[IR]`):
 -   Tasks: Matter only notifies the IR TX task (`app_ir_notify()`, a task notification) when OnOff, SystemMode,
     a setpoint or FanMode changed. The IR TX task reads the attributes itself with the Matter stack locked, builds
     the message and sends it. The IR RX task decodes the receiver and writes the remote's state into Matter itself,
-    also with the stack locked. Both IR tasks run below the Matter task; Matter and OpenThread keep the priorities
-    of the thermostat (1 and 5). Long IR logs are off by default, `IR_VERBOSE_LOGS` (menu `IR air conditioner`).
+    also with the stack locked. Both IR tasks run at priority 2, just above the Matter task (1) and below
+    OpenThread (5): at the idle priority a command waited seconds while Matter was busy. Long IR logs are off by default, `IR_VERBOSE_LOGS` (menu `IR air conditioner`).
 -   With `IR_VERBOSE_LOGS`, every message we send is also decoded by the library and logged (`[IR TX]`: protocol, bytes, description),
     to check the bytes without a receiver.
 -   IR receiver (TSOP38238, VS1838B, ... 38 kHz module: VCC 3.3 V, GND, OUT to GPIO 5, internal pull-up): every
