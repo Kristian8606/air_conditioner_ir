@@ -98,8 +98,9 @@ static bool app_ir_read_matter_state(app_ir_state_t *state)
 
 /* Decide whether the state has to be sent and remember it.
  * Nothing is sent on boot: the air conditioner keeps its own state over a reboot or an OTA update of the ESP32,
- * sending it again would only make it beep. While the unit is off, a new mode, setpoint or fan speed is only sent
- * with the next power on. */
+ * sending it again would only make it beep. Every command from a controller is sent, also the same state again (e.g.
+ * the same temperature after the unit was changed by other means): a command which does nothing is confusing. While
+ * the unit is off, a new mode, setpoint or fan speed is only sent with the next power on. */
 static bool app_ir_should_send(const app_ir_state_t &state, bool force)
 {
     bool send = true;
@@ -109,8 +110,8 @@ static bool app_ir_should_send(const app_ir_state_t &state, bool force)
         send = false;
     } else if (!force && esp_timer_get_time() < app_ir_quiet_until_us) {
         send = false;   /* Matter follows a message of the original remote: the unit already is in this state */
-    } else if (!force && (app_ir_state_equal(state, app_ir_last) || (!state.power && !app_ir_last.power))) {
-        send = false;
+    } else if (!force && !state.power && !app_ir_last.power) {
+        send = false;   /* The unit stays off */
     }
     app_ir_have_last = true;
     app_ir_last = state;

@@ -20,7 +20,8 @@ conditioner does (log `[IR]`):
 | Fan       | FanMode Low/Medium/High; Off (0 %) is the automatic fan of the unit (a running unit always runs its fan). There is no Auto FanMode: with it Apple Home greys out the speed slider |
 | Swing     | Fan Control RockSetting (Swing in Apple Home, oscillation in Home Assistant): any swing is the up/down swing; separate left/right only with `IR_AC_SWING_HORIZONTAL` (log `[SWING]`), not kept over a reboot. HomeKit has no louver position, only swing on/off |
 
--   Only a change is sent: the sensor reports do not send anything. While the unit is off, changes of the mode,
+-   Every command from a controller is sent, also the same state again (e.g. the same temperature); the sensor
+    reports do not send anything. While the unit is off, changes of the mode,
     setpoint or fan are sent with the next power on.
 -   Moving a slider writes several values: the IR task waits 0.5 s and sends only the last one.
 -   Nothing is sent on boot (reboot, OTA update): the air conditioner keeps its own state.
