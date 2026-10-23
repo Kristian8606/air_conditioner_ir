@@ -43,7 +43,8 @@ conditioner does (log `[IR]`):
     received message is decoded and logged in one line (`[IR RX]`: protocol, bits, bytes). The decoder tolerance
     is 40 % (receiver modules shorten the marks). It decodes the selected protocol and NEC; `IR_RX_DECODE_ALL`
     compiles every decoder of the library to find the protocol of an unknown remote (much more flash). Our own
-    echo (until 0.5 s after a transmission) is not taken as the remote. With `IR_VERBOSE_LOGS` also the
+    echo (the state we sent, until 0.5 s after a transmission) is not taken as the remote; a different state in
+    that time is the remote pressed right after our message. With `IR_VERBOSE_LOGS` also the
     description of the message, the raw durations of unknown messages and the own echo are logged.
 -   A double press of the BOOT button selects the next model of the remote (1 .. `IR_AC_MODEL_MAX`, Fujitsu: 1
     ARRAH2E, 2 ARDB1, 3 ARREB1E, 4 ARJW2, 5 ARRY4, 6 ARREW4E, then 1 again), keeps it in NVS and sends the

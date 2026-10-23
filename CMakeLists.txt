@@ -6,8 +6,8 @@ if(NOT DEFINED ENV{ESP_MATTER_PATH})
     message(FATAL_ERROR "Please set ESP_MATTER_PATH to the path of esp-matter repo")
 endif(NOT DEFINED ENV{ESP_MATTER_PATH})
 
-set(PROJECT_VER "0.14.2")
-set(PROJECT_VER_NUMBER 36)
+set(PROJECT_VER "0.14.3")
+set(PROJECT_VER_NUMBER 37)
 
 set(ESP_MATTER_PATH $ENV{ESP_MATTER_PATH})
 set(MATTER_SDK_PATH ${ESP_MATTER_PATH}/connectedhomeip/connectedhomeip)

@@ -26,12 +26,24 @@ static uint32_t ir_carrier_frequency = UINT32_MAX;
 static uint8_t ir_carrier_duty = 0;
 static SemaphoreHandle_t ir_mutex = nullptr;
 static bool ir_channel_enabled = false;
-static volatile int64_t ir_last_end_us = 0;
-static volatile int64_t ir_expected_end_us = 0;   /* Set before sending: now + duration of the message */
+/* Written by the sending task, read by the receiving task: a 64-bit value is two words on a 32-bit CPU, so both are
+ * accessed in a critical section (a torn read could take an echo for the remote, or the remote for an echo) */
+static int64_t ir_last_end_us = 0;
+static int64_t ir_expected_end_us = 0;   /* Set before sending: now + duration of the message */
+static portMUX_TYPE ir_time_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static void ir_rmt_tx_set_time(int64_t *time, int64_t value)
+{
+    portENTER_CRITICAL(&ir_time_lock);
+    *time = value;
+    portEXIT_CRITICAL(&ir_time_lock);
+}
 
 bool ir_rmt_tx_echo_window(int64_t echo_us)
 {
+    portENTER_CRITICAL(&ir_time_lock);
     int64_t end = ir_expected_end_us > ir_last_end_us ? ir_expected_end_us : ir_last_end_us;
+    portEXIT_CRITICAL(&ir_time_lock);
     return end != 0 && esp_timer_get_time() < end + echo_us;
 }
 
@@ -180,7 +192,7 @@ bool ir_rmt_tx_send(uint16_t gpio, bool inverted, const uint32_t *symbols, size_
         }
         /* Before the transmission: a receiver next to the LED reports the echo 15 ms after the end, maybe before
          * this task runs again after rmt_tx_wait_all_done() */
-        ir_expected_end_us = esp_timer_get_time() + total_us;
+        ir_rmt_tx_set_time(&ir_expected_end_us, esp_timer_get_time() + total_us);
 
         rmt_transmit_config_t transmit_config = {};
         transmit_config.loop_count = 0;
@@ -188,7 +200,7 @@ bool ir_rmt_tx_send(uint16_t gpio, bool inverted, const uint32_t *symbols, size_
         if (err == ESP_OK) {
             err = rmt_tx_wait_all_done(ir_channel, IR_RMT_TX_TIMEOUT_MS);
         }
-        ir_last_end_us = esp_timer_get_time();
+        ir_rmt_tx_set_time(&ir_last_end_us, esp_timer_get_time());
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to send %u symbols: %s", (unsigned)count, esp_err_to_name(err));
             ok = false;

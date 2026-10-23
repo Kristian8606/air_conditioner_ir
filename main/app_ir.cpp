@@ -90,10 +90,24 @@ static int64_t app_ir_quiet_until_us = 0;
 /* Set with the first notification (after Matter has started): before that the attributes cannot be read */
 static volatile bool app_ir_matter_ready = false;
 
+/* Same state of the air conditioner. Two "off" states are the same: an "off" message carries no mode or setpoint
+ * (Fujitsu decodes it as Auto 16 C), so only the power counts. */
 static bool app_ir_state_equal(const app_ir_state_t &a, const app_ir_state_t &b)
 {
+    if (!a.power && !b.power) {
+        return true;
+    }
     return a.power == b.power && a.mode == b.mode && a.setpoint == b.setpoint && a.fan == b.fan &&
            a.swing_v == b.swing_v && a.swing_h == b.swing_h;
+}
+
+/* The state is the one we sent last (or got from the remote last) */
+static bool app_ir_state_is_last(const app_ir_state_t &state)
+{
+    xSemaphoreTake(app_ir_state_mutex, portMAX_DELAY);
+    bool same = app_ir_have_last && app_ir_state_equal(state, app_ir_last);
+    xSemaphoreGive(app_ir_state_mutex);
+    return same;
 }
 
 /* Read the state from Matter. The attributes belong to the Matter task: lock its stack while reading. */
@@ -468,13 +482,24 @@ static void app_ir_rx_task(void *arg)
             continue;
         }
         /* The echo window starts before our message is sent: no race with the IR task */
-        bool own = ir_rmt_tx_echo_window(APP_IR_RX_OWN_US);
+        bool echo_window = ir_rmt_tx_echo_window(APP_IR_RX_OWN_US);
         decode_results results;
-        if (!app_ir_decode_log(irrecv, "[IR RX]", usecs, count, own, results) || own) {
-            continue;   /* Our own message (reflected or from the LED next to the receiver) is not a remote */
+        if (!app_ir_decode_log(irrecv, "[IR RX]", usecs, count, echo_window, results)) {
+            continue;
         }
         app_ir_state_t state;
-        if (app_ir_matter_ready && app_ir_remote_state(results, &state)) {
+        bool remote_state = app_ir_matter_ready && app_ir_remote_state(results, &state);
+        if (echo_window) {
+            /* Our own message (reflected, or from the LED next to the receiver) is what we just sent. A different
+             * state in the window is the original remote pressed right after our message: Matter follows it. */
+            if (!remote_state || app_ir_state_is_last(state)) {
+                continue;
+            }
+            APP_LOG("[IR RX]    %s, %u bits, data %s (in the echo window, but not what we sent: the original remote)",
+                    typeToString(results.decode_type, results.repeat).c_str(), results.bits,
+                    resultToHexidecimal(&results).c_str());
+        }
+        if (remote_state) {
             app_ir_apply_remote(state);
         }
         if (APP_IR_VERBOSE) {
