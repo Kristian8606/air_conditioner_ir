@@ -593,8 +593,15 @@ void app_driver_ir_apply_remote(const app_ir_state_t *state)
             fan->SetFanMode(fan_modes[state->fan]);
         }
         chip::BitMask<FanControl::RockBitmap> rock;
-        rock.Set(FanControl::RockBitmap::kRockUpDown, state->swing_v);
-        rock.Set(FanControl::RockBitmap::kRockLeftRight, APP_SWING_HORIZONTAL && state->swing_h);
+        if (APP_SWING_HORIZONTAL) {
+            rock.Set(FanControl::RockBitmap::kRockUpDown, state->swing_v);
+            rock.Set(FanControl::RockBitmap::kRockLeftRight, state->swing_h);
+        } else if (state->swing_v) {
+            /* Both bits: Apple Home shows its Swing as on only with RockLeftRight (the bit it writes itself), Home
+             * Assistant any value but 0. Over IR any swing is the up/down swing. */
+            rock.Set(FanControl::RockBitmap::kRockUpDown);
+            rock.Set(FanControl::RockBitmap::kRockLeftRight);
+        }
         /* Without horizontal louvers only on/off matters: Apple Home may have switched the swing on with RockLeftRight */
         bool changed = APP_SWING_HORIZONTAL ? fan->GetRockSetting().Raw() != rock.Raw()
                                             : (fan->GetRockSetting().Raw() != 0) != state->swing_v;
