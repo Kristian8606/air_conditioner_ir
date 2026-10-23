@@ -142,6 +142,9 @@ menu "Air Conditioner Device Information"
     config AC_HARDWARE_VERSION_STRING
         string "Hardware version"
         default "ESP32-C6"
+        help
+            The board. The protocol and the model of the IR remote are added, e.g. "ESP32-C6, FUJITSU_AC ARRAH2E"
+            (Hardware in Apple Home and Home Assistant).
 
     config AC_SERIAL_NUMBER_PREFIX
         string "Serial number prefix"

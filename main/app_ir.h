@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* Air conditioner modes, independent of IRremoteESP8266 (stdAc::opmode_t is mapped in app_ir.cpp) */
@@ -53,3 +54,9 @@ void app_ir_notify(bool force);
  * @return The new model.
  */
 int16_t app_ir_next_model();
+
+/** The protocol and the model of the remote for the controllers, e.g. "FUJITSU_AC ARRAH2E" or "COOLIX model 1".
+ *
+ * Shown in the Hardware field of Apple Home and Home Assistant (HardwareVersionString).
+ */
+void app_ir_describe(char *buf, size_t size);

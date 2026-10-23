@@ -525,3 +525,27 @@ int16_t app_ir_next_model()
     APP_LOG("[IR]       model %d of %d (%s), stored", model, CONFIG_IR_AC_MODEL_MAX, CONFIG_IR_AC_PROTOCOL);
     return model;
 }
+
+/* Names of the remote models of the protocols which have them (the models of IRremoteESP8266) */
+static const char *app_ir_model_name(int16_t model)
+{
+#if SEND_FUJITSU_AC
+    static const char *const fujitsu_models[] = {"ARRAH2E", "ARDB1", "ARREB1E", "ARJW2", "ARRY4", "ARREW4E"};
+    if (decode_type_t::IR_AC_PROTOCOL_ENUM == decode_type_t::FUJITSU_AC && model >= 1 &&
+            model <= (int16_t)(sizeof(fujitsu_models) / sizeof(fujitsu_models[0]))) {
+        return fujitsu_models[model - 1];
+    }
+#endif
+    return nullptr;
+}
+
+void app_ir_describe(char *buf, size_t size)
+{
+    int16_t model = app_ir_model;
+    const char *name = app_ir_model_name(model);
+    if (name) {
+        snprintf(buf, size, "%s %s", CONFIG_IR_AC_PROTOCOL, name);
+    } else {
+        snprintf(buf, size, "%s model %d", CONFIG_IR_AC_PROTOCOL, (int)model);
+    }
+}

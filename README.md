@@ -131,7 +131,8 @@ Thread network, the bindings and the settings are erased. Remove the device from
 ACL entry from the sensor) first.
 
 `menuconfig` -> `Air Conditioner Device Information` sets the vendor name, product name, hardware version
-and the serial number prefix (serial number = prefix + MAC address).
+and the serial number prefix (serial number = prefix + MAC address). The protocol and the model of the IR remote are
+added to the hardware version, so Apple Home and Home Assistant show e.g. "ESP32-C6, FUJITSU_AC ARRAH2E".
 
 ## 3. Remote sensor temperature
 

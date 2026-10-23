@@ -42,9 +42,14 @@ public:
         return copy_string(CONFIG_AC_PRODUCT_NAME, buf, bufSize);
     }
 
+    /* The board and the IR remote, e.g. "ESP32-C6, FUJITSU_AC ARRAH2E" (the model follows a double click on BOOT) */
     CHIP_ERROR GetHardwareVersionString(char *buf, size_t bufSize) override
     {
-        return copy_string(CONFIG_AC_HARDWARE_VERSION_STRING, buf, bufSize);
+        char remote[48];
+        app_ir_describe(remote, sizeof(remote));
+        int len = snprintf(buf, bufSize, "%s, %s", CONFIG_AC_HARDWARE_VERSION_STRING, remote);
+        VerifyOrReturnError(len > 0 && (size_t)len < bufSize, CHIP_ERROR_BUFFER_TOO_SMALL);
+        return CHIP_NO_ERROR;
     }
 
     /* Unique per board: the factory programmed MAC address of the chip */
