@@ -34,6 +34,26 @@ endmenu
 
 menu "Air Conditioner Configuration"
 
+    choice AC_DEVICE_TYPE
+        prompt "Matter device type"
+        default AC_DEVICE_THERMOSTAT
+        help
+            How the air conditioner is shown to the controllers. Remove the device from the controllers and add it
+            again after a change, they keep the device type of the commissioning.
+
+        config AC_DEVICE_THERMOSTAT
+            bool "Thermostat (0x0301)"
+            help
+                Thermostat and Fan Control, without On/Off: SystemMode Off switches the unit off. Home Assistant
+                shows a climate entity (modes, setpoints) and a fan entity (speed, low/medium/high/auto).
+
+        config AC_DEVICE_ROOM_AIR_CONDITIONER
+            bool "Room Air Conditioner (0x0072)"
+            help
+                On/Off (power), Thermostat and Fan Control. The unit is off when On/Off is off, whatever
+                SystemMode is.
+    endchoice
+
     config THERMOSTAT_ENABLE_AUTO
         bool "Enable Auto mode"
         default y

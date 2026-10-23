@@ -236,11 +236,17 @@ extern "C" void app_main()
     cluster::basic_information::attribute::create_serial_number(basic_info_cluster, NULL, 0);
     cluster::basic_information::attribute::create_product_label(basic_info_cluster, NULL, 0);
 
+#if CONFIG_AC_DEVICE_ROOM_AIR_CONDITIONER
     /* Room Air Conditioner (0x0072): Identify, OnOff (with the DeadFrontBehavior feature) and Thermostat (Cooling is
      * always added by esp-matter). FanControl is added below. */
     room_air_conditioner::config_t thermostat_config;
     /* Off on the very first boot, OnOff is non-volatile afterwards */
     thermostat_config.on_off.on_off = false;
+#else
+    /* Thermostat (0x0301): Identify, Groups, ScenesManagement and Thermostat, no OnOff: SystemMode Off switches the
+     * unit off. FanControl (optional on a Thermostat) is added below. */
+    endpoint::thermostat::config_t thermostat_config;
+#endif
     /* Unknown until the first report from the remote sensor. */
     thermostat_config.thermostat.local_temperature = nullable<int16_t>();
     /* Off on the very first boot. SystemMode and the setpoints are non-volatile, so after a reboot the
@@ -259,8 +265,12 @@ extern "C" void app_main()
     thermostat_config.thermostat.features.auto_mode.min_setpoint_dead_band = THERMOSTAT_MIN_SETPOINT_DEAD_BAND;
 #endif
 
+#if CONFIG_AC_DEVICE_ROOM_AIR_CONDITIONER
     endpoint_t *endpoint = room_air_conditioner::create(node, &thermostat_config, ENDPOINT_FLAG_NONE, thermostat_handle);
-    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create room air conditioner endpoint"));
+#else
+    endpoint_t *endpoint = endpoint::thermostat::create(node, &thermostat_config, ENDPOINT_FLAG_NONE, thermostat_handle);
+#endif
+    ABORT_APP_ON_FAILURE(endpoint != nullptr, ESP_LOGE(TAG, "Failed to create the air conditioner endpoint"));
 
     /* Fan of the air conditioner: Off, Low, Medium, High and Auto (FanModeSequence OffLowMedHighAuto), three speeds
      * (MultiSpeed, SpeedMax 3) and PercentSetting. FanControl is code-driven, the application gets the changes
@@ -285,20 +295,9 @@ extern "C" void app_main()
     ABORT_APP_ON_FAILURE(thermostat_cluster != nullptr, ESP_LOGE(TAG, "Failed to get thermostat cluster"));
     app_thermostat_add_optional_attributes(thermostat_cluster);
 
-#if !CONFIG_ESP_MATTER_ENABLE_GENERATED_DATA_MODEL
-    /* The default function list of the Thermostat cluster does not contain the AttributeChanged
-     * callback. Without it the Thermostat server never runs EnsureDeadband(), so in Auto a controller
-     * can end up with heating and cooling setpoints closer than MinSetpointDeadBand (or even crossed).
-     * Register it here so the server moves the other setpoint when one of them is changed. */
-    static const cluster::function_generic_t thermostat_function_list[] = {
-        (cluster::function_generic_t)emberAfThermostatClusterServerInitCallback,
-        (cluster::function_generic_t)MatterThermostatClusterServerAttributeChangedCallback,
-        (cluster::function_generic_t)MatterThermostatClusterServerPreAttributeChangedCallback,
-    };
-    cluster::add_function_list(thermostat_cluster, thermostat_function_list,
-                               CLUSTER_FLAG_INIT_FUNCTION | CLUSTER_FLAG_ATTRIBUTE_CHANGED_FUNCTION |
-                               CLUSTER_FLAG_PRE_ATTRIBUTE_CHANGED_FUNCTION);
-#endif
+    /* esp-matter main (connectedhomeip v1.7) does not integrate the code-driven Thermostat server yet: its init and
+     * PreAttributeChanged callbacks are empty stubs, so there is no dead band adjustment and no Presets. The setpoint
+     * limits are still enforced by the attribute bounds of esp-matter. */
 
     /* TemperatureDisplayMode is exposed to Apple Home as the TemperatureDisplayUnits characteristic. */
     cluster::thermostat_user_interface_configuration::config_t ui_config;
@@ -343,9 +342,16 @@ extern "C" void app_main()
     cluster_t *battery_cluster = cluster::power_source::create(endpoint, &battery_config,
                                                                CLUSTER_FLAG_SERVER | CLUSTER_FLAG_CLIENT);
     ABORT_APP_ON_FAILURE(battery_cluster != nullptr, ESP_LOGE(TAG, "Failed to create battery power source"));
-    /* Unknown until the first report from the sensor, 0.5 % units */
-    cluster::power_source::attribute::create_bat_percent_remaining(battery_cluster, nullable<uint8_t>(),
-                                                                   nullable<uint8_t>(0), nullable<uint8_t>(200));
+    /* 0.5 % units. Never null: Apple Home reads it as the Battery Level of the accessory, and a read of a null value
+     * failed on the home hub (HMErrorDomain 4), which marked the whole accessory "No Response" after every command.
+     * 100 % until the first report of the sensor, then the last reported value, kept in NVS over reboots and while
+     * the sensor is not reporting (not bound, out of range). */
+    attribute_t *bat_percent = esp_matter::attribute::create(battery_cluster,
+        PowerSource::Attributes::BatPercentRemaining::Id, ATTRIBUTE_FLAG_NULLABLE | ATTRIBUTE_FLAG_NONVOLATILE,
+        esp_matter_nullable_uint8(nullable<uint8_t>(200)));
+    ABORT_APP_ON_FAILURE(bat_percent != nullptr, ESP_LOGE(TAG, "Failed to create the battery percentage"));
+    esp_matter::attribute::add_bounds(bat_percent, esp_matter_nullable_uint8(nullable<uint8_t>(0)),
+                                      esp_matter_nullable_uint8(nullable<uint8_t>(200)));
 
     thermostat_endpoint_id = endpoint::get_id(endpoint);
     ESP_LOGI(TAG, "Thermostat created with endpoint_id %d", thermostat_endpoint_id);

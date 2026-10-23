@@ -58,11 +58,12 @@ information about building and flashing the firmware.
 
 ## 1. Data model
 
-Endpoint 1 is a Room Air Conditioner (0x0072) device:
+Endpoint 1 is a Thermostat (0x0301, default) or a Room Air Conditioner (0x0072) device, menuconfig
+`Matter device type` (remove the device from the controllers and add it again after a change):
 
 | Cluster                               | Role            | Purpose                                                           |
 |---------------------------------------|-----------------|-------------------------------------------------------------------|
-| On/Off                                | Server          | Power of the unit (DeadFrontBehavior)                             |
+| On/Off                                | Server          | Power of the unit (DeadFrontBehavior), Room Air Conditioner only |
 | Thermostat                            | Server          | SystemMode (Off/Heat/Cool/Auto), heating and cooling setpoints    |
 | Fan Control                           | Server          | FanMode Off/Low/Medium/High/Auto, 3 speeds, PercentSetting        |
 | Thermostat User Interface Configuration | Server        | Temperature display unit                                          |
@@ -72,11 +73,14 @@ Endpoint 1 is a Room Air Conditioner (0x0072) device:
 | Binding                               | Server          | Holds the binding to the remote sensor(s)                         |
 | Identify                              | Server          | Identify and TriggerEffect blink the status LED                   |
 
--   With On/Off off the unit is off, whatever SystemMode is. SystemMode, the setpoints and On/Off are stored
+-   Thermostat: SystemMode Off switches the unit off, "off" of the original remote writes SystemMode Off. Home
+    Assistant shows a climate entity (modes, setpoints) and a fan entity (speed, low/medium/high/auto).
+-   Room Air Conditioner: with On/Off off the unit is off, whatever SystemMode is. SystemMode, the setpoints and On/Off are stored
     in NVS and restored after a reboot.
 -   Fan Control is a code-driven cluster in esp-matter: the FanControl server keeps the values (FanMode also
     in NVS) and the application gets the changes through `FanControl::Delegate::OnFanDriveStateChanged()`
-    (log `[FAN]`), not through the attribute callback.
+    (log `[FAN]`), not through the attribute callback. `PercentCurrent` / `SpeedCurrent` are set by the
+    application: the setting while the unit is on (Auto: the middle speed), 0 while it is off.
 -   `LocalTemperature` is the temperature of the bound sensor, not the one of the air conditioner. It is null
     until the first report and again after the sensor timeout.
 -   The air conditioner controls the temperature itself and gives no feedback over IR, so
@@ -84,8 +88,9 @@ Endpoint 1 is a Room Air Conditioner (0x0072) device:
     FanOnly and Dry run the fan, in Auto the sensor temperature tells which way it works.
 -   The setpoint limit attributes are optional in esp-matter and are created in `app_main.cpp`. The range is
     set in menuconfig (default 16..30 °C), stored setpoints outside of it are moved into it on boot.
--   The AttributeChanged callback of the Thermostat cluster is registered in `app_main.cpp`, so in Auto the
-    server keeps the cooling setpoint at least `MinSetpointDeadBand` (default 0) above the heating one.
+-   Built with esp-matter `main` (connectedhomeip v1.7): esp-matter does not integrate the code-driven Thermostat
+    server yet, its callbacks are empty stubs. The setpoint limits are enforced by the attribute bounds, but in Auto
+    `MinSetpointDeadBand` is not kept and there are no Presets.
 
 Apple Home and Home Assistant: see [ROADMAP.md](ROADMAP.md), step 1 (known Apple issue: Auto on a Room
 Air Conditioner is sent as Cool).
@@ -161,7 +166,10 @@ Logs: every value has its own line with the `THERMOSTAT` tag (`idf.py monitor | 
 1.  On the device page bind TemperatureMeasurement (0x0402) to the temperature endpoint of the sensor and
     RelativeHumidityMeasurement (0x0405) to its humidity endpoint.
 2.  Home Assistant writes the binding table and adds the ACL entry on the sensor ("ACL present").
-3.  The battery needs no binding: PowerSource 0x002F is read from the node of the bound temperature sensor
+3.  The battery is never null: 100 % until the first report, then the last reported value (kept in NVS, also
+    while the sensor is not reporting). Apple Home reads it as Battery Level and showed the whole accessory as
+    "No Response" when it was null.
+4.  The battery needs no binding: PowerSource 0x002F is read from the node of the bound temperature sensor
     with a wildcard endpoint.
 
 Every commissioning gives the device a new node id and the sensor keeps the ACL entries of the old ones.

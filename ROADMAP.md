@@ -127,18 +127,65 @@
   Matter (1) и OpenThread (5) са като в термостата (не са сменяни).
 - v0.8.1: почистване (неизползвани include-и, вътрешен
   ir_rmt_tx_last_end_us, README за приемника).
+- v0.8.2: кандидат за "Няма отговор": PercentCurrent/SpeedCurrent на
+  Fan Control никога не се обновяваха (FanControlCluster ги оставя на
+  приложението, нулира ги само при Off), оставаха 0 при PercentSetting
+  например 66 %. Сега следват настройката при включен климатик (Auto:
+  средна скорост, 66 %), 0 при изключен. Обновяват се от Fan делегата и
+  от thermostat_update (OnOff/SystemMode). Термостатът няма Fan Control,
+  затова там проблемът го няма. Да се провери в Apple Home.
+  Резултат: "Няма отговор" остава. Логът показва, че устройството
+  отговаря на WriteRequest от Apple за 10 ms и всичко се потвърждава
+  (Ack, статус 0x00): не е от комуникацията на ESP. Поправено: Fan
+  делегатът при стартиране (EP65535, "Endpoint cannot be NULL").
+- v0.9.0: Presets на Thermostat (main/app_presets.cpp): Home, Away,
+  Sleep, Wake (вградени), Vacation и UserDefined, по един от тип,
+  handle = сценарият. Делегатът пази списъка и активния пресет в NVS
+  и прилага температурите на пресета (те стигат до климатика по IR като
+  запис от контролер). AtomicRequest/AtomicResponse се добавят ръчно.
+  Опит за адаптивна температура в Apple Home; да се провери дали Apple
+  я предлага за Room AC и дали влияе на "Няма отговор".
+  Резултат: "Няма отговор" остава.
+- v0.10.0: тип на устройството в menuconfig (Matter device type):
+  Thermostat (0x0301, по подразбиране) или Room Air Conditioner. Като
+  Thermostat няма On/Off: SystemMode Off изключва климатика, "изкл." от
+  дистанционното пише SystemMode Off. Fan Control остава (по избор на
+  Thermostat): в HA отделен fan entity със скорост и low/medium/high/
+  auto, climate entity с режими, температури и пресети. Тест: има ли
+  "Няма отговор" в Apple Home като Thermostat. След смяна на типа
+  устройството се маха от контролерите и се добавя отново.
+  Резултат: "Няма отговор" и като Thermostat. Термостатът
+  (thermostat_remote_sensor v2.3.1 и v2.3.0), който преди работеше, сега
+  също го има: не е от кода на климатика.
+- v0.11.0: само esp-matter main (2b066d96, connectedhomeip v1.7-te2).
+  Thermostat там е code-driven, а esp-matter още не го интегрира
+  (празни заглушки в esp_matter_ember_stubs.cpp): махнати са Presets
+  (main/app_presets.cpp), AttributeChanged callback-ът и мъртвата зона
+  в Auto. Хедърът за влажността е от
+  relative-humidity-measurement-server/CodegenIntegration.h.
+  Резултат: "Няма отговор" остава.
+- v0.11.1: истинската причина за "Няма отговор" (лог на homed на Mac,
+  log stream, Home app на Mac). Записите от Apple минават (28-93 ms), но
+  ~2 s след всеки Apple чете Battery Level (HAP 0x68 =
+  PowerSource BatPercentRemaining) и хъбът връща HMErrorDomain Code=4:
+  стойността е null, защото сензорът не докладва (binding-ът се губи при
+  всяко ново добавяне). Apple маркира целия аксесоар като недостъпен.
+  Затова го имаше и термостатът, и без IR, и с двата SDK, и "изчезваше"
+  при пълно изтриване (тогава сензорът е бил вързан наново).
+  BatPercentRemaining вече не е null: 100 % преди първия доклад, после
+  последната стойност, в NVS (ATTRIBUTE_FLAG_NONVOLATILE). Неизвестна
+  стойност от сензора не се пише. Същото и в термостата (v2.3.2).
+  Потвърдено 2026-10-23 в Apple Home: няма "Няма отговор" след команда,
+  няма и периодичното "Обновяване" (то идваше от същото четене на
+  батерията).
 
 ## Остава
-1. "Няма отговор" в Apple Home след команда (не е решено). Изключени:
-   IR задачите, светодиодът, приемникът, закръглянето, CASE клиентите
-   (и 0.6.3 го има). Следи: повторни пакети към iPhone-а (85A56EE0) и два
-   Thread border router-а. Тестове: HA, Apple Home от друго устройство,
-   тестов режим "като термостат" (без Room AC тип, OnOff, Fan Control).
-2. Хардуер: NPN транзистор за IR светодиода (обхват).
-3. Етап 6: компенсация с дистанционния сензор.
-4. По избор: щори (swing) през Fan Control Rocking/AirflowDirection,
+1. Хардуер: NPN транзистор за IR светодиода (обхват).
+2. Етап 6: компенсация с дистанционния сензор.
+3. По избор: щори (swing) през Fan Control Rocking/AirflowDirection,
    Dry/Fan режими от Matter, имената THERMOSTAT_* в menuconfig → AC_*.
-5. Presets (от плана на термостата, експериментално).
+4. Presets: направени във v0.9.0, махнати във v0.11.0 (esp-matter main
+   няма Thermostat делегат). Връщат се, когато esp-matter го интегрира.
 
 ## 1. Matter устройство
 - Тип Room Air Conditioner (0x0072): On/Off + Thermostat (Cooling

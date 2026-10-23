@@ -25,7 +25,7 @@
 #include <app/clusters/bindings/binding-table.h>
 #include <app/data-model/Decode.h>
 #include <app/server/Server.h>
-#include <clusters/relative_humidity_measurement/integration.h>
+#include <app/clusters/relative-humidity-measurement-server/CodegenIntegration.h>
 #include <app/clusters/power-source-server/power-source-server.h>
 #include <app/clusters/fan-control-server/fan-control-delegate.h>
 #include <app/clusters/fan-control-server/CodegenIntegration.h>
@@ -354,14 +354,47 @@ static app_ir_fan_t app_driver_get_fan()
     }
 }
 
-/* OnOff of the Room Air Conditioner (false if it cannot be read) */
+/* OnOff of the Room Air Conditioner (false if it cannot be read). A Thermostat has no OnOff: the power is SystemMode
+ * alone, so it is always on here. */
 static bool app_driver_get_power()
 {
+#if CONFIG_AC_DEVICE_ROOM_AIR_CONDITIONER
     esp_matter_attr_val_t val = esp_matter_invalid(NULL);
     if (attribute::get_val(thermostat_endpoint_id, OnOff::Id, OnOff::Attributes::OnOff::Id, &val) != ESP_OK) {
         return false;
     }
     return val.val.b;
+#else
+    return true;
+#endif
+}
+
+/* PercentCurrent and SpeedCurrent are the speed the fan runs at. The FanControl server leaves them to the application
+ * (it only sets them to 0 for FanMode Off), so without this they stayed 0 while PercentSetting changed, and Apple Home
+ * saw a fan which never followed its setting. The unit gives no feedback over IR: the fan runs at its setting while the
+ * unit is on, Auto is shown as the middle speed. Call it on the Matter thread. */
+static void app_driver_update_fan_current(bool running)
+{
+    FanControlCluster *fan = FanControl::FindClusterOnEndpoint(thermostat_endpoint_id);
+    if (!fan) {
+        return;
+    }
+    chip::Percent percent = 0;
+    uint8_t speed = 0;
+    if (running) {
+        auto percent_setting = fan->GetPercentSetting();
+        auto speed_setting = fan->GetSpeedSetting();
+        uint8_t speed_max = fan->GetSpeedMax();
+        if (fan->GetFanMode() == FanControl::FanModeEnum::kAuto || percent_setting.IsNull()) {
+            percent = 66;
+            speed = speed_max > 1 ? (uint8_t)((speed_max + 1) / 2) : speed_max;
+        } else {
+            percent = percent_setting.Value();
+            speed = speed_setting.IsNull() ? (uint8_t)((speed_max * percent + 99) / 100) : speed_setting.Value();
+        }
+    }
+    fan->SetPercentCurrent(percent);
+    fan->SetSpeedCurrent(speed);
 }
 
 /* Called by the IR TX task with the Matter stack locked: the whole state of the air conditioner from OnOff,
@@ -448,6 +481,7 @@ static void app_driver_thermostat_update(intptr_t arg)
             heating_setpoint / 100, heating_setpoint % 100, cooling_setpoint / 100, cooling_setpoint % 100);
 
     app_driver_update_running_state(system_mode, heating_setpoint, cooling_setpoint);
+    app_driver_update_fan_current(system_mode != Thermostat::SystemModeEnum::kOff);
     app_driver_update_status_led();
 }
 
@@ -494,12 +528,24 @@ void app_driver_ir_apply_remote(const app_ir_state_t *state)
         return;
     }
     esp_matter_attr_val_t val = esp_matter_bool(state->power);
+#if CONFIG_AC_DEVICE_ROOM_AIR_CONDITIONER
     if (app_driver_get_power() != state->power) {
         app_driver_update_attribute(OnOff::Id, OnOff::Attributes::OnOff::Id, &val, "original remote");
     }
     if (!state->power) {
         return;     /* An "off" message of the remote carries nothing else */
     }
+#else
+    if (!state->power) {
+        /* No OnOff on a Thermostat: "off" of the remote is SystemMode Off */
+        if (app_driver_get_system_mode() != chip::to_underlying(Thermostat::SystemModeEnum::kOff)) {
+            val = esp_matter_enum8(chip::to_underlying(Thermostat::SystemModeEnum::kOff));
+            app_driver_update_attribute(Thermostat::Id, Thermostat::Attributes::SystemMode::Id, &val,
+                                        "original remote");
+        }
+        return;
+    }
+#endif
     Thermostat::SystemModeEnum mode = app_driver_remote_system_mode(state->mode);
     if (app_driver_get_system_mode() != chip::to_underlying(mode)) {
         val = esp_matter_enum8(chip::to_underlying(mode));
@@ -557,6 +603,13 @@ public:
                 mode < 7 ? mode_names[mode] : "Unknown", state.percentCurrent,
                 state.percentSetting.IsNull() ? -1 : state.percentSetting.Value(), state.speedCurrent,
                 state.speedSetting.IsNull() ? -1 : state.speedSetting.Value(), thermostat_endpoint_id, mode);
+        /* Called by the FanControl server on the Matter thread: the current speed follows the new setting. On boot the
+         * server restores FanMode before app_driver_thermostat_start(), thermostat_update sets it then. */
+        if (thermostat_endpoint_id == chip::kInvalidEndpointId) {
+            return;
+        }
+        app_driver_update_fan_current(app_driver_get_power() &&
+                                      app_driver_get_system_mode() != chip::to_underlying(Thermostat::SystemModeEnum::kOff));
         /* The IR TX task reads FanMode itself */
         app_ir_notify(false);
     }
@@ -658,18 +711,17 @@ static void app_driver_remote_humidity_set(bool valid, uint16_t humidity)
 }
 
 /* Store the battery of the sensor and show it in the PowerSource cluster of the thermostat endpoint.
- * percent is in 0.5 % units (200 == 100 %), as in the BatPercentRemaining attribute. */
+ * percent is in 0.5 % units (200 == 100 %), as in the BatPercentRemaining attribute. An unknown value is not written:
+ * the attribute keeps the last reported one (null made Apple Home show the accessory as "No Response"). */
 static void app_driver_remote_battery_set(bool valid, uint8_t percent)
 {
-    nullable<uint8_t> bat_percent_remaining;
-    if (valid) {
-        bat_percent_remaining = nullable<uint8_t>(percent);
-        APP_LOG("[BATTERY]  %d%s %% (EP%u BatPercentRemaining 0x002F/0x000C = %u)", percent / 2,
-                percent % 2 ? ".5" : "", thermostat_endpoint_id, percent);
-    } else {
-        APP_LOG("[BATTERY]  unknown (EP%u BatPercentRemaining 0x002F/0x000C = null)", thermostat_endpoint_id);
+    if (!valid) {
+        APP_LOG("[BATTERY]  unknown, last value kept (EP%u BatPercentRemaining 0x002F/0x000C)", thermostat_endpoint_id);
+        return;
     }
-    esp_matter_attr_val_t val = esp_matter_nullable_uint8(bat_percent_remaining);
+    APP_LOG("[BATTERY]  %d%s %% (EP%u BatPercentRemaining 0x002F/0x000C = %u)", percent / 2, percent % 2 ? ".5" : "",
+            thermostat_endpoint_id, percent);
+    esp_matter_attr_val_t val = esp_matter_nullable_uint8(nullable<uint8_t>(percent));
     app_driver_update_attribute(PowerSource::Id, PowerSource::Attributes::BatPercentRemaining::Id, &val, "sensor report");
 }
 
